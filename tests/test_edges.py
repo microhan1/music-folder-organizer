@@ -129,7 +129,7 @@ def test_nested_empty_folders_and_what_keeps_a_folder(tmp_path):
     # artist/album are "Art"/"Alb": a target "A/B" would be the same folder as "a/b" on Windows
     put(tmp_path, "song-128.mp3", "a/b/c/d/s.mp3", title="S", artist="Art", album="Alb", tracknumber="1")
     put(tmp_path, "other.mp3", "keep/t.mp3", title="T", artist="Art", album="Alb", tracknumber="2")
-    (tmp_path / "keep" / "album.cue").write_text("cue")
+    (tmp_path / "keep" / "my notes.docx").write_text("not an album extra")  # keeps its folder
     (tmp_path / "a" / "b" / ".DS_Store").write_bytes(b"x")
     (tmp_path / "a" / "b" / "c" / "desktop.ini").write_bytes(b"x")
     os.chmod(tmp_path / "a" / "b" / "c" / "desktop.ini", stat.S_IREAD)  # read-only junk
@@ -140,7 +140,7 @@ def test_nested_empty_folders_and_what_keeps_a_folder(tmp_path):
                             "already-empty"])
     res = mover.execute(p)
     assert res.folders_removed == 5 and not (tmp_path / "a").exists()
-    assert (tmp_path / "keep" / "album.cue").exists()
+    assert (tmp_path / "keep" / "my notes.docx").exists()
     assert os.path.isdir(tmp_path)  # the source root itself is never removed
     undo.undo(res.log_path)
     assert (tmp_path / "a" / "b" / "c" / "d" / "s.mp3").exists() and (tmp_path / "already-empty").is_dir()

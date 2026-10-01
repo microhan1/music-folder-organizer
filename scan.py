@@ -20,6 +20,11 @@ TAGBAK_SUFFIX = ".tagbak.json"  # music-tag-filler's per-file backup
 COVER_NAMES = {f"{stem}{ext}" for stem in ("cover", "folder", "front") for ext in (".jpg", ".jpeg", ".png")}
 JUNK_NAMES = {"thumbs.db", ".ds_store", "desktop.ini", "ehthumbs.db"}
 LOG_NAME = "organize_log.json"
+# album extras that may follow a whole album to its new folder (anything else stays put)
+SIDECAR_EXTS = {".cue", ".log", ".txt", ".nfo", ".m3u", ".m3u8", ".pdf", ".accurip", ".sfv", ".md5", ".ffp",
+                ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
+CUE_MAX_BYTES = 1024 * 1024
+_CUE_FILE = re.compile(r'^\s*FILE\s+(?:"([^"]+)"|(\S+))', re.IGNORECASE | re.MULTILINE)
 
 
 @dataclasses.dataclass
@@ -67,6 +72,7 @@ class DirInfo:
     path: str
     files: list[str]  # names
     subdirs: list[str]  # names
+    cue_refs: set[str] = dataclasses.field(default_factory=set)  # lower-case file names the folder's .cue sheets name
 
 
 @dataclasses.dataclass
@@ -113,7 +119,11 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
             return ScanResult(root, [], dirs, cancelled=True)
         subdirs[:] = sorted(d for d in subdirs if key_of(os.path.join(here, d)) not in skip)
         files.sort()
-        dirs[key_of(here)] = DirInfo(here, list(files), list(subdirs))
+        info = DirInfo(here, list(files), list(subdirs))
+        for f in files:
+            if f.lower().endswith(".cue"):
+                info.cue_refs |= cue_refs(os.path.join(here, f))
+        dirs[key_of(here)] = info
         audio.extend(os.path.join(here, f) for f in files if format_of(f))
     tracks: list[Track] = []
     total = len(audio)
@@ -124,6 +134,30 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
         if progress is not None and (i % 25 == 0 or i + 1 == total):
             progress(i + 1, total)
     return ScanResult(root, tracks, dirs)
+
+
+def cue_refs(path: str) -> set[str]:
+    """Lower-case base names of the files a cue sheet points at (its FILE lines).
+    Read only; cue sheets come in UTF-8, Shift-JIS, CP949 and Latin-1."""
+    try:
+        if os.path.getsize(path) > CUE_MAX_BYTES:
+            return set()
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return set()
+    for enc in ("utf-8-sig", "cp932", "cp949", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    out = set()
+    for m in _CUE_FILE.finditer(text):
+        name = (m.group(1) or m.group(2) or "").strip()
+        if name:
+            out.add(name.replace("\\", "/").rsplit("/", 1)[-1].lower())
+    return out
 
 
 # ------------------------------------------------------------------ reading

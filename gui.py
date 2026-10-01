@@ -143,6 +143,7 @@ class App:
         self.var_mode = tk.StringVar(value="move")
         self.var_remove_empty = tk.BooleanVar(value=self.prefs.remove_empty)
         self.var_untagged = tk.BooleanVar(value=self.prefs.include_untagged)
+        self.var_sidecars = tk.BooleanVar(value=self.prefs.move_sidecars)
         self.var_fp = tk.BooleanVar(value=False)
         self.var_dupes_action = tk.StringVar(value=self.prefs.dupes_action)
         self.var_pref = tk.StringVar(value=self.prefs.artist_name_preference)
@@ -362,8 +363,14 @@ class App:
         for value, key in (("move", "opt_move"), ("copy", "opt_copy")):
             ttk.Radiobutton(flags, text=t(key), value=value, variable=self.var_mode, style="Seg.Toolbutton",
                             command=self._options_changed).pack(side="left")
-        self._chip(flags, "opt_remove_empty", self.var_remove_empty, self._options_changed).pack(side="left", padx=(24, 0))
-        self._chip(flags, "opt_include_untagged", self.var_untagged, self._options_changed).pack(side="left", padx=(8, 0))
+        row += 1
+
+        field(t("lbl_options"))
+        chips = ttk.Frame(grid)
+        chips.grid(row=row, column=1, sticky="w", pady=(8, 0))
+        for key, var in (("opt_remove_empty", self.var_remove_empty), ("opt_sidecars", self.var_sidecars),
+                         ("opt_include_untagged", self.var_untagged)):
+            self._chip(chips, key, var, self._options_changed).pack(side="left", padx=(0, 8))
 
         nb = ttk.Notebook(body)
         nb.pack(fill="both", expand=True, pady=(16, 0))
@@ -577,6 +584,7 @@ class App:
     def _options_changed(self) -> None:
         self.prefs.remove_empty = self.var_remove_empty.get()
         self.prefs.include_untagged = self.var_untagged.get()
+        self.prefs.move_sidecars = self.var_sidecars.get()
         self.prefs.dupes_action = self.var_dupes_action.get()
         if not pattern_mod.validate(self.var_pattern.get()):
             self.prefs.pattern = self.var_pattern.get().strip()
@@ -675,6 +683,8 @@ class App:
             return
         s = self.plan.summary()
         text = t("summary", **{k: s[k] for k in ("move", "same", "untagged", "dupes", "folders")})
+        if s["sidecars"]:
+            text += ", " + t("summary_sidecars", count=s["sidecars"])
         if s["untagged"]:
             text += "   ·   " + t("msg_untagged_hint")
         if self.alias_error:
@@ -693,6 +703,8 @@ class App:
                 tags.append("muted")
             new = t("lbl_trash") if item.action == plan_mod.DUPE_TRASH else _rel(item.dst, dest)
             status = t(f"status_{item.status}")
+            if item.keep_name:
+                status += " · " + t("status_keep_name")
             if item.truncated:
                 status += " · " + t("status_truncated")
             tree.insert("", "end", iid=item.key, tags=tags,

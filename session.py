@@ -44,6 +44,7 @@ def options(p: Prefs, root: str, dest: str | None, mode: str) -> plan_mod.Option
         remove_empty=p.remove_empty,
         dupes_action=p.dupes_action,
         dupes_name=p.dupes_name(),
+        move_sidecars=p.move_sidecars,
     )
 
 

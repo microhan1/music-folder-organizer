@@ -62,6 +62,10 @@ Empty values become fallback names such as "Unknown Artist" and "Unknown Album" 
 
 `.lrc` files, Music Tag Filler backups (`.tagbak.json`) and `cover.jpg` / `folder.jpg` move along with the music. Folders left empty are removed (including ones holding only `Thumbs.db` or `desktop.ini`).
 
+**Album extras**: when every song of a folder goes to the same new folder, the album's `.cue`, `.log`, `.txt`, `.nfo`, `.m3u`, `.pdf` and image files go too, along with subfolders that hold only such files (`Artwork`, `Scans`, ...). If the songs split across albums, or for files outside that list (personal documents and the like), things stay where they are. Turn it off with the "Bring album extras along" option (`--no-sidecars`).
+
+**Albums with a cue sheet**: when a folder's `.cue` names the music files in it, those files keep their names and only the folder follows the pattern, so the cue sheet stays valid (its content is not touched).
+
 ## Duplicates
 
 | Stage | Rule | In the preview |
@@ -107,7 +111,7 @@ If tags are empty, fill them first with [Music Tag Filler](https://github.com/mi
 - It never connects to the internet. Fingerprints are compared locally.
 - It never deletes files outright: duplicates go to the `_Duplicates` folder or the recycle bin.
 - No format conversion, playback or playlists.
-- Lyrics and cover files only travel with the music in the same folder. `.cue`, `.log` and `Artwork` folders stay where they are.
+- Lyrics, covers and album extras only travel with the music; their content is never edited.
 
 ## License
 

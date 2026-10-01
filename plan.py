@@ -13,7 +13,8 @@ from collections import Counter
 import pattern as pattern_mod
 from artists import ArtistIndex
 from dedupe import DupeGroup
-from scan import COVER_NAMES, JUNK_NAMES, LRC_EXT, TAGBAK_SUFFIX, ScanResult, Track, key_of, target_key
+from scan import (COVER_NAMES, JUNK_NAMES, LRC_EXT, SIDECAR_EXTS, TAGBAK_SUFFIX, ScanResult, Track, format_of,
+                  key_of, target_key)
 
 # item status
 OK, SAME, UNTAGGED, DUP, CONFLICT = "ok", "same", "untagged", "dup", "conflict"
@@ -32,6 +33,7 @@ class Options:
     remove_empty: bool = True
     dupes_action: str = "move"  # or "trash"
     dupes_name: str = "_Duplicates"
+    move_sidecars: bool = True  # an album's .cue/.log/images/Artwork follow it when the whole album moves
 
     @property
     def in_place(self) -> bool:
@@ -50,6 +52,7 @@ class Item:
     artist_note: str = ""
     guess: bool = False  # touched by an unconfirmed artist guess
     group: int = 0  # duplicate group id
+    keep_name: bool = False  # a .cue sheet names this file: only its folder changes
 
     @property
     def key(self) -> str:
@@ -65,8 +68,8 @@ class Companion:
     src: str
     dst: str
     op: str  # "move" or "copy"
-    kind: str  # "lrc", "tagbak", "cover"
-    owner: str = ""  # key_of(item.src) for lrc / tagbak: skipped when that item fails
+    kind: str  # "lrc", "tagbak", "cover", "sidecar"
+    owner: str = ""  # lrc / tagbak: key_of(item.src); sidecar: "dir:" + key_of(album folder). Skipped when that fails
 
 
 @dataclasses.dataclass
@@ -84,7 +87,11 @@ class Plan:
             "dupes": sum(1 for i in self.items if i.status == DUP),
             "folders": len(self.empty_dirs),
             "trash": sum(1 for i in self.items if i.moves and i.action == DUPE_TRASH),
+            "sidecars": sum(1 for c in self.companions if c.kind == "sidecar"),
         }
+
+    def sidecars(self) -> list[Companion]:
+        return [c for c in self.companions if c.kind == "sidecar"]
 
     def untagged(self) -> list[Item]:
         return [i for i in self.items if i.track.is_untagged() or i.track.error]
@@ -121,9 +128,13 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
         _artist_note(item, index)
         items.append(item)
 
+    # folders whose .cue sheet names their own music files: renaming those files would break the sheet
+    cue_dirs = {k for k, info in scan.dirs.items()
+                if info.cue_refs & {f.lower() for f in info.files if format_of(f)}}
     claimed: set[str] = set()
     counters: dict[str, int] = {}
     for item in items:
+        item.keep_name = key_of(item.track.folder) in cue_dirs and item.action not in (DUPE_MOVE, DUPE_TRASH)
         _place(item, scan.root, opts, artist_map, claimed, counters)
     companions = _companions(items, scan, opts)
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
@@ -155,6 +166,8 @@ def _target(item: Item, root: str, opts: Options, artist_map) -> tuple[list[str]
         parts = rel.split(os.sep)
         return [opts.dupes_name, *parts[:-1]], os.path.splitext(parts[-1])[0], ext
     segs = pattern_mod.render(opts.pattern, track, opts.fallbacks, artist_map)
+    if item.keep_name:
+        return segs[:-1], os.path.splitext(track.name)[0], ext  # the pattern picks the folder only
     return segs[:-1], segs[-1], ext
 
 
@@ -254,6 +267,59 @@ def _companions(items: list[Item], scan: ScanResult, opts: Options) -> list[Comp
             add(src, os.path.join(first, name), "move" if everyone_leaves else "copy", "cover")
             for target in rest:
                 _copy_cover(out, taken, src, os.path.join(target, name))
+    if opts.move_sidecars:
+        for dkey, dir_items in by_dir.items():
+            _sidecars(dkey, dir_items, scan, opts, add)
+    return out
+
+
+def _sidecars(dkey: str, dir_items: list[Item], scan: ScanResult, opts: Options, add) -> None:
+    """When every music file of a folder goes to one new folder, the album's extras
+    (.cue, .log, booklet, scans, an Artwork/ subfolder ...) go with it."""
+    info = scan.dirs.get(dkey)
+    if info is None or dkey in (key_of(scan.root), key_of(opts.dest)):
+        return  # the roots hold this tool's own log and lists, and unrelated things
+    if not all(i.moves and i.dst for i in dir_items):
+        return
+    targets = {target_key(os.path.dirname(i.dst)) for i in dir_items}
+    if len(targets) != 1:
+        return  # the album is split over several folders: its extras stay put
+    target = os.path.dirname(dir_items[0].dst)
+    if target_key(target) == target_key(info.path):
+        return
+    op = "copy" if opts.mode == "copy" else "move"
+    owner = "dir:" + dkey
+    for name in info.files:
+        low = name.lower()
+        if format_of(name) or low in JUNK_NAMES or low in COVER_NAMES:
+            continue  # music, junk and covers have their own rules
+        if os.path.splitext(low)[1] in SIDECAR_EXTS:
+            add(os.path.join(info.path, name), os.path.join(target, name), op, "sidecar", owner)
+    for sub in info.subdirs:
+        files = _extras_only(key_of(os.path.join(info.path, sub)), scan)
+        for path in files or []:
+            add(path, os.path.join(target, os.path.relpath(path, info.path)), op, "sidecar", owner)
+
+
+def _extras_only(dkey: str, scan: ScanResult) -> list[str] | None:
+    """All files under a subfolder when it holds only album extras (and junk), else None.
+    A subfolder with music in it is an album of its own, not an extra."""
+    info = scan.dirs.get(dkey)
+    if info is None:
+        return None
+    out = []
+    for name in info.files:
+        low = name.lower()
+        if low in JUNK_NAMES:
+            continue
+        if format_of(name) or os.path.splitext(low)[1] not in SIDECAR_EXTS:
+            return None
+        out.append(os.path.join(info.path, name))
+    for sub in info.subdirs:
+        inner = _extras_only(key_of(os.path.join(info.path, sub)), scan)
+        if inner is None:
+            return None
+        out.extend(inner)
     return out
 
 

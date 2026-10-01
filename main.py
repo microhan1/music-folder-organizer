@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--trash", action="store_true", help=t("cli_trash"))
     p.add_argument("--include-untagged", action="store_true", help=t("cli_include_untagged"))
     p.add_argument("--keep-empty", action="store_true", help=t("cli_keep_empty"))
+    p.add_argument("--no-sidecars", action="store_true", help=t("cli_no_sidecars"))
     p.add_argument("--artists", help=t("cli_artists"))
     p.add_argument("--dry-run", action="store_true", help=t("cli_dry_run"))
     p.add_argument("--undo", action="store_true", help=t("cli_undo"))
@@ -72,6 +73,8 @@ def _rel(path: str, base: str) -> str:
 
 def status_label(item: plan_mod.Item) -> str:
     label = t(f"status_{item.status}")
+    if item.keep_name:
+        label += " · " + t("status_keep_name")
     if item.truncated:
         label += " · " + t("status_truncated")
     return label
@@ -105,6 +108,8 @@ def run_cli(args: argparse.Namespace) -> int:
         p.include_untagged = True
     if args.keep_empty:
         p.remove_empty = False
+    if args.no_sidecars:
+        p.move_sidecars = False
     if args.trash:
         p.dupes_action = "trash"
     if args.artists:
@@ -146,10 +151,15 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"{mark} [{status_label(item)}] {_rel(item.src, root)} → {new}")
         if item.artist_note:
             print(f"      {t('col_artist')}: {item.artist_note}")
+    for c in the_plan.sidecars():
+        print(f"  + {_rel(c.src, root)} → {_rel(c.dst, dest)}")
     for g in index.guesses:
         print(t("cli_guess", names=" / ".join(g.names), album=g.album, proposed=g.proposed))
     s = the_plan.summary()
-    print(t("summary", **{k: s[k] for k in ("move", "same", "untagged", "dupes", "folders")}))
+    line = t("summary", **{k: s[k] for k in ("move", "same", "untagged", "dupes", "folders")})
+    if s["sidecars"]:
+        line += ", " + t("summary_sidecars", count=s["sidecars"])
+    print(line)
     if s["untagged"]:
         print(t("msg_untagged_hint"))
     if args.dry_run:

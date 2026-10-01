@@ -309,6 +309,7 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
                 res.done += 1
             except OSError as exc:
                 failed_keys.add(item.key)
+                failed_keys.add("dir:" + key_of(os.path.dirname(item.src)))  # its album's extras stay too
                 res.failed.append((item.src, reason_of(exc)))
             tick()
         if not res.cancelled:

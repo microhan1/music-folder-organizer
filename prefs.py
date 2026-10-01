@@ -23,6 +23,7 @@ class Prefs:
     pattern: str = DEFAULT_PATTERN
     remove_empty: bool = True
     include_untagged: bool = False
+    move_sidecars: bool = True  # album extras (.cue, .log, booklet, Artwork/) follow a whole album
     dupes_action: str = "move"  # "move" to the dupes folder, or "trash"
     dupes_folder: str = ""  # "" = the language file's name
     fallbacks: dict = dataclasses.field(default_factory=dict)  # {"artist": "...", ...}
@@ -59,6 +60,7 @@ def load() -> Prefs:
         pattern=typed("pattern", str).strip() or DEFAULT_PATTERN,
         remove_empty=typed("remove_empty", bool),
         include_untagged=typed("include_untagged", bool),
+        move_sidecars=typed("move_sidecars", bool),
         dupes_action=typed("dupes_action", str),
         dupes_folder=typed("dupes_folder", str),
         fallbacks={k: v for k, v in typed("fallbacks", dict).items() if k in FALLBACK_KEYS and isinstance(v, str)},
