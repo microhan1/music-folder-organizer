@@ -1,6 +1,9 @@
 {
   "app_title": "音乐文件夹整理",
   "drop_hint": "将音乐文件夹拖到这里",
+  "app_tagline": "按标签整理到歌手·专辑文件夹 · 查找重复 · 随时撤销",
+  "drop_sub": "包含子文件夹。点击执行之前不会移动任何文件。",
+  "lbl_mode": "方式",
   "lbl_language": "语言",
   "source_label": "源文件夹",
   "btn_pick_folder": "选择文件夹…",

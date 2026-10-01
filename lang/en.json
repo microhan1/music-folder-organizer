@@ -1,6 +1,9 @@
 {
   "app_title": "Music Folder Organizer",
   "drop_hint": "Drop a music folder here",
+  "app_tagline": "Sort music into artist and album folders by tag · find duplicates · undo anytime",
+  "drop_sub": "Subfolders are included. Nothing moves until you press Run.",
+  "lbl_mode": "Mode",
   "lbl_language": "Language",
   "source_label": "Source",
   "btn_pick_folder": "Choose folder…",

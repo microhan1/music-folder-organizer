@@ -33,16 +33,41 @@ except Exception:  # pragma: no cover - optional dependency
     _HAS_DND = False
 
 ON, OFF = "☑", "☐"
-BG = "#f3f4f6"
-CARD = "#ffffff"
-TEXT = "#1f2937"
+# palette: light grey page, white cards, the icon's green as the accent
+BG = "#f4f5f7"
+SURFACE = "#ffffff"
+BORDER = "#e3e6ea"
+HEAD_BG = "#f8f9fb"
+TEXT = "#1f2328"
 MUTED = "#6b7280"
-ACCENT = "#2563eb"
-CONFLICT_BG = "#fef3c7"
-DUP_FG = "#b45309"
+ACCENT = "#059669"
+ACCENT_HOVER = "#047857"
+ACCENT_SOFT = "#e8f6ef"
+ACCENT_OFF = "#a7dcc4"
+SELECT_BG = "#d7f0e4"
+STRIPE = "#fafbfc"
+CONFLICT_BG = "#fff6dc"
+DUP_FG = "#c2410c"
 GUESS_FG = "#2563eb"
-ERROR_FG = "#b91c1c"
+ERROR_FG = "#c62828"
+ERROR_SOFT = "#fdecec"
 MAX_LIST = 30  # lines of a failure list shown in a dialog
+
+# UI font per language; tables always use a font with Hangul, kana and hanzi,
+# because file names mix scripts whatever the UI language is
+UI_FONTS = {"ko": ("맑은 고딕", "Malgun Gothic"), "ja": ("Yu Gothic UI", "Meiryo UI", "Meiryo"),
+            "zh-CN": ("Microsoft YaHei UI", "Microsoft YaHei"), "en": ("Segoe UI",)}
+CJK_FONTS = ("맑은 고딕", "Malgun Gothic", "Yu Gothic UI", "Microsoft YaHei UI", "Noto Sans KR")
+
+
+def _pick_font(root: tk.Misc, candidates: tuple[str, ...]) -> str:
+    from tkinter import font as tkfont
+
+    families = set(tkfont.families(root))
+    for name in (*candidates, *CJK_FONTS):
+        if name in families:
+            return name
+    return tkfont.nametofont("TkDefaultFont").actual()["family"]
 
 
 def _enable_dpi_awareness() -> None:
@@ -65,11 +90,22 @@ def _fmt_length(seconds: float) -> str:
     return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
 
 
+def _short(path: str, limit: int = 96) -> str:
+    """Middle ellipsis: keeps the drive and the last folders, which are what people recognise."""
+    if len(path) <= limit:
+        return path
+    keep = limit - 1
+    return path[: keep // 3] + "…" + path[-(keep - keep // 3):]
+
+
 def _rel(path: str, base: str) -> str:
+    """Path relative to base for display, with "/" so it reads the same in every font
+    (Korean and Japanese fonts draw a backslash as ₩ or ¥)."""
     try:
-        return os.path.relpath(path, base)
+        rel = os.path.relpath(path, base)
     except ValueError:
         return path
+    return rel.replace(os.sep, "/")
 
 
 def open_path(path: str) -> None:
@@ -112,8 +148,20 @@ class App:
         self.var_pref = tk.StringVar(value=self.prefs.artist_name_preference)
         self.var_lang = tk.StringVar(value=i18n.LANG_NAMES[i18n.current_lang()])
         root.configure(bg=BG)
-        root.geometry("1280x820")
-        root.minsize(960, 640)
+        # as tall as the screen allows (the table gets the extra room), never taller
+        screen_h = root.winfo_screenheight() - 90
+        height = max(700, min(1000, screen_h))
+        root.geometry(f"1280x{height}")
+        root.minsize(1000, min(800, screen_h))  # below ~800 px the table has no rows left
+        self._icon = self._icon_big = None
+        icon = os.path.join(i18n.resource_dir(), "assets", "icon.png")
+        if os.path.exists(icon):
+            try:
+                full = tk.PhotoImage(file=icon)  # 256 px
+                self._icon = full.subsample(7)
+                self._icon_big = full.subsample(4)
+            except tk.TclError:
+                pass
         self._style()
         self.frame: ttk.Frame | None = None
         self._build()
@@ -127,185 +175,367 @@ class App:
 
     # ------------------------------------------------------------------ layout
     def _style(self) -> None:
-        style = ttk.Style(self.root)
+        from tkinter import font as tkfont
+
+        root = self.root
+        ui = _pick_font(root, UI_FONTS.get(i18n.current_lang(), ()))
+        # Malgun Gothic has Hangul, kana and hanzi; Yu Gothic and YaHei lack Hangul, which then blurs
+        table = _pick_font(root, ("맑은 고딕", "Malgun Gothic"))
+        self.f_base = (ui, 10)
+        self.f_small = (ui, 9)
+        self.f_label = (ui, 9, "bold")
+        self.f_title = (ui, 15, "bold")
+        self.f_drop = (ui, 13, "bold")
+        self.f_table = (table, 10)
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
+            tkfont.nametofont(name).configure(family=ui, size=10)
+        root.option_add("*TCombobox*Listbox.font", self.f_base)
+        root.option_add("*TCombobox*Listbox.selectBackground", SELECT_BG)
+        root.option_add("*TCombobox*Listbox.selectForeground", TEXT)
+
+        s = ttk.Style(root)
         try:
-            style.theme_use("clam")
+            s.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure(".", background=BG, foreground=TEXT)
-        style.configure("Card.TFrame", background=CARD)
-        style.configure("Card.TLabel", background=CARD)
-        style.configure("Muted.TLabel", foreground=MUTED)
-        style.configure("Title.TLabel", font=("Segoe UI", 14, "bold"))
-        style.configure("Error.TLabel", foreground=ERROR_FG)
-        style.configure("Accent.TButton", foreground="white", background=ACCENT)
-        style.map("Accent.TButton", background=[("disabled", "#93c5fd"), ("active", "#1d4ed8")])
-        style.configure("Treeview", rowheight=24)
+        flat = {"bordercolor": BORDER, "lightcolor": SURFACE, "darkcolor": SURFACE}
+        s.configure(".", background=SURFACE, foreground=TEXT, font=self.f_base, focuscolor=ACCENT, **flat)
+        s.configure("Body.TFrame", background=BG)
+        s.configure("Body.TLabel", background=BG)
+        s.configure("Muted.TLabel", foreground=MUTED)
+        s.configure("Small.TLabel", foreground=MUTED, font=self.f_small)
+        s.configure("Error.TLabel", foreground=ERROR_FG)
+        s.configure("Field.TLabel", foreground=MUTED, font=self.f_label)
+        s.configure("Title.TLabel", font=self.f_title)
+        s.configure("Path.TLabel", font=self.f_base)
+        s.configure("Summary.TLabel", background=ACCENT_SOFT, foreground=ACCENT_HOVER, padding=(12, 8))
+        s.configure("SummaryMuted.TLabel", background=HEAD_BG, foreground=MUTED, padding=(12, 8))
+        s.configure("SummaryError.TLabel", background=ERROR_SOFT, foreground=ERROR_FG, padding=(12, 8))
+
+        # buttons: white with a hairline border; the primary one is filled
+        s.configure("TButton", padding=(14, 6), background=SURFACE, relief="raised", anchor="center",
+                    bordercolor="#cdd2d8", lightcolor=SURFACE, darkcolor=SURFACE)  # "flat" would hide the border
+        s.map("TButton", background=[("disabled", SURFACE), ("pressed", "#eceef1"), ("active", HEAD_BG)],
+              foreground=[("disabled", "#b4b9c0")], bordercolor=[("disabled", BORDER), ("active", "#aeb5be")])
+        s.configure("Accent.TButton", background=ACCENT, foreground="#ffffff", bordercolor=ACCENT,
+                    lightcolor=ACCENT, darkcolor=ACCENT, font=(self.f_base[0], 10, "bold"), padding=(22, 6))
+        s.map("Accent.TButton", background=[("disabled", ACCENT_OFF), ("pressed", ACCENT_HOVER), ("active", ACCENT_HOVER)],
+              foreground=[("disabled", "#ffffff")], bordercolor=[("disabled", ACCENT_OFF), ("active", ACCENT_HOVER)],
+              lightcolor=[("disabled", ACCENT_OFF), ("active", ACCENT_HOVER)], darkcolor=[("disabled", ACCENT_OFF), ("active", ACCENT_HOVER)])
+
+        # two-way choices as a segmented control
+        s.configure("Seg.Toolbutton", padding=(14, 5), background=HEAD_BG, foreground=MUTED, anchor="center",
+                    relief="raised", bordercolor=BORDER, lightcolor=HEAD_BG, darkcolor=HEAD_BG)
+        s.map("Seg.Toolbutton", background=[("selected", ACCENT_SOFT), ("active", "#eef0f3")],
+              foreground=[("selected", ACCENT_HOVER)], bordercolor=[("selected", ACCENT)],
+              lightcolor=[("selected", ACCENT_SOFT)], darkcolor=[("selected", ACCENT_SOFT)])
+        # on/off options as chips: a check mark appears in the text when on (see _chip)
+        s.configure("Chip.Toolbutton", padding=(12, 5), background=SURFACE, foreground=MUTED, anchor="center",
+                    relief="raised", bordercolor="#d5dae0", lightcolor=SURFACE, darkcolor=SURFACE)
+        s.map("Chip.Toolbutton", background=[("selected", ACCENT_SOFT), ("active", HEAD_BG)],
+              foreground=[("selected", ACCENT_HOVER)], bordercolor=[("selected", ACCENT)],
+              lightcolor=[("selected", ACCENT_SOFT)], darkcolor=[("selected", ACCENT_SOFT)])
+        for w in ("TCheckbutton", "TRadiobutton"):
+            s.configure(w, background=SURFACE, indicatorbackground=SURFACE, indicatorforeground=ACCENT,
+                        upperbordercolor="#c3c8cf", lowerbordercolor="#c3c8cf", indicatormargin=(0, 0, 6, 0))
+            s.map(w, background=[("active", SURFACE)], indicatorbackground=[("selected", SURFACE), ("pressed", ACCENT_SOFT)])
+
+        s.configure("TCombobox", padding=(8, 5), arrowcolor=MUTED, fieldbackground=SURFACE, background=SURFACE, **flat)
+        s.map("TCombobox", fieldbackground=[("readonly", SURFACE)], bordercolor=[("focus", ACCENT)],
+              selectbackground=[("readonly", SURFACE)], selectforeground=[("readonly", TEXT)])
+        s.configure("TEntry", padding=(8, 5), **flat)
+
+        s.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
+        s.configure("TNotebook.Tab", padding=(18, 8), background=BG, foreground=MUTED, borderwidth=0,
+                    bordercolor=BG, lightcolor=BG, darkcolor=BG, font=(self.f_base[0], 10, "bold"))
+        s.map("TNotebook.Tab", background=[("selected", SURFACE), ("active", "#eceef1")],
+              foreground=[("selected", ACCENT_HOVER)], bordercolor=[("selected", BORDER)],
+              lightcolor=[("selected", SURFACE)], expand=[("selected", (0, 0, 0, 0))])
+
+        s.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, foreground=TEXT, rowheight=30,
+                    font=self.f_table, borderwidth=0, **flat)
+        s.map("Treeview", background=[("selected", SELECT_BG)], foreground=[("selected", TEXT)])
+        s.configure("Treeview.Heading", background=HEAD_BG, foreground=MUTED, font=self.f_label, relief="flat",
+                    padding=(8, 7), bordercolor=BORDER, lightcolor=HEAD_BG, darkcolor=HEAD_BG)
+        s.map("Treeview.Heading", background=[("active", "#eef0f3")])
+        s.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])  # no sunken frame
+
+        s.configure("Vertical.TScrollbar", background="#d5d9de", troughcolor=SURFACE, arrowcolor=MUTED,
+                    gripcount=0, arrowsize=12, **flat)
+        s.map("Vertical.TScrollbar", background=[("active", "#bfc5cc")])
+        s.configure("Accent.Horizontal.TProgressbar", background=ACCENT, troughcolor="#e6e9ed", thickness=6,
+                    bordercolor="#e6e9ed", lightcolor=ACCENT, darkcolor=ACCENT)
+
+    def _chip(self, parent, key: str, var: tk.BooleanVar, command) -> ttk.Checkbutton:
+        """A toggle chip; its text carries a check mark while it is on."""
+        def label() -> str:
+            return ("✓ " if var.get() else "") + t(key)
+
+        def toggled() -> None:
+            chip.configure(text=label())
+            command()
+
+        chip = ttk.Checkbutton(parent, text=label(), variable=var, style="Chip.Toolbutton", command=toggled)
+        return chip
+
+    @staticmethod
+    def _card(parent, **pack) -> tk.Frame:
+        """White panel with a hairline border (tk.Frame: ttk frames cannot colour their border)."""
+        card = tk.Frame(parent, bg=SURFACE, highlightbackground=BORDER, highlightcolor=BORDER, highlightthickness=1)
+        card.pack(**pack)
+        return card
 
     def _build(self) -> None:
         if self.frame is not None:
             self.frame.destroy()
         self.root.title(t("app_title"))
-        f = ttk.Frame(self.root, padding=10)
-        f.pack(fill="both", expand=True)
-        self.frame = f
+        outer = ttk.Frame(self.root, style="Body.TFrame")
+        outer.pack(fill="both", expand=True)
+        self.frame = outer
 
-        top = ttk.Frame(f)
-        top.pack(fill="x")
-        ttk.Label(top, text=t("app_title"), style="Title.TLabel").pack(side="left")
-        lang = ttk.Combobox(top, textvariable=self.var_lang, values=list(i18n.LANG_NAMES.values()), state="readonly", width=10)
+        # header: icon, name, tagline, language
+        head = tk.Frame(outer, bg=SURFACE, highlightbackground=BORDER, highlightthickness=0)
+        head.pack(fill="x")
+        tk.Frame(outer, bg=BORDER, height=1).pack(fill="x")
+        inner = ttk.Frame(head, padding=(20, 14))
+        inner.pack(fill="x")
+        if self._icon is not None:
+            ttk.Label(inner, image=self._icon).pack(side="left", padx=(0, 12))
+        names = ttk.Frame(inner)
+        names.pack(side="left")
+        ttk.Label(names, text=t("app_title"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(names, text=t("app_tagline"), style="Small.TLabel").pack(anchor="w")
+        lang = ttk.Combobox(inner, textvariable=self.var_lang, values=list(i18n.LANG_NAMES.values()), state="readonly", width=10)
         lang.pack(side="right")
         lang.bind("<<ComboboxSelected>>", self._on_lang)
-        ttk.Label(top, text=t("lbl_language")).pack(side="right", padx=6)
+        ttk.Label(inner, text=t("lbl_language"), style="Muted.TLabel").pack(side="right", padx=8)
 
-        src = ttk.Frame(f)
-        src.pack(fill="x", pady=(10, 4))
-        ttk.Label(src, text=t("source_label"), width=12).pack(side="left")
-        self.lbl_source = ttk.Label(src, text=self.source or t("drop_hint"), style="Muted.TLabel" if not self.source else "TLabel")
-        self.lbl_source.pack(side="left", fill="x", expand=True)
+        # the action bar is packed before the body so a short window squeezes the table, not the buttons
+        bar = ttk.Frame(outer, padding=(20, 12))
+        bar.pack(side="bottom", fill="x")
+        tk.Frame(outer, bg=BORDER, height=1).pack(side="bottom", fill="x")
+        body = ttk.Frame(outer, style="Body.TFrame", padding=(20, 16, 20, 16))
+        body.pack(fill="both", expand=True)
+
+        # source + options in one card
+        card = self._card(body, fill="x")
+        grid = ttk.Frame(card, padding=(18, 12, 18, 10))
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        row = 0
+
+        def field(text: str) -> None:
+            ttk.Label(grid, text=text, style="Field.TLabel").grid(row=row, column=0, sticky="nw", padx=(0, 18), pady=(7, 0))
+
+        field(t("source_label"))
+        src = ttk.Frame(grid)
+        src.grid(row=row, column=1, sticky="we", pady=(0, 8))
+        self.lbl_source = ttk.Label(src, text=_short(self.source) if self.source else t("drop_hint"),
+                                    style="Path.TLabel" if self.source else "Muted.TLabel")
+        self.lbl_source.pack(side="left", fill="x", expand=True, pady=(5, 0))
         ttk.Button(src, text=t("btn_pick_folder"), command=self._pick_source).pack(side="right")
+        row += 1
 
-        opt = ttk.Frame(f)
-        opt.pack(fill="x", pady=4)
-        ttk.Label(opt, text=t("pattern_label"), width=12).grid(row=0, column=0, sticky="w")
-        combo = ttk.Combobox(opt, textvariable=self.var_pattern, values=list(prefs_mod.PRESETS), width=60)
-        combo.grid(row=0, column=1, sticky="w")
-        ttk.Label(opt, text=t("pattern_hint"), style="Muted.TLabel").grid(row=1, column=1, columnspan=4, sticky="w")
-        ttk.Label(opt, text=t("dest_label"), width=12).grid(row=2, column=0, sticky="w", pady=4)
-        where = ttk.Frame(opt)
-        where.grid(row=2, column=1, columnspan=4, sticky="we")
-        ttk.Radiobutton(where, text=t("opt_in_place"), value="inplace", variable=self.var_where,
-                        command=self._dest_changed).pack(side="left")
-        ttk.Radiobutton(where, text=t("opt_other_folder"), value="other", variable=self.var_where,
-                        command=self._dest_changed).pack(side="left", padx=(12, 4))
-        self.lbl_dest = ttk.Label(where, text=self.dest_other or "-", style="Muted.TLabel")
-        self.lbl_dest.pack(side="left", padx=4)
-        ttk.Button(where, text=t("btn_browse"), command=self._pick_dest).pack(side="left", padx=4)
-        flags = ttk.Frame(opt)
-        flags.grid(row=3, column=1, columnspan=4, sticky="w")
-        ttk.Radiobutton(flags, text=t("opt_move"), value="move", variable=self.var_mode, command=self._options_changed).pack(side="left")
-        ttk.Radiobutton(flags, text=t("opt_copy"), value="copy", variable=self.var_mode, command=self._options_changed).pack(side="left", padx=(8, 20))
-        ttk.Checkbutton(flags, text=t("opt_remove_empty"), variable=self.var_remove_empty, command=self._options_changed).pack(side="left")
-        ttk.Checkbutton(flags, text=t("opt_include_untagged"), variable=self.var_untagged, command=self._options_changed).pack(side="left", padx=12)
-        opt.columnconfigure(1, weight=1)
+        field(t("pattern_label"))
+        pat = ttk.Frame(grid)
+        pat.grid(row=row, column=1, sticky="we", pady=(0, 8))
+        ttk.Combobox(pat, textvariable=self.var_pattern, values=list(prefs_mod.PRESETS), width=58).pack(anchor="w")
+        hint = ttk.Label(pat, text=t("pattern_hint"), style="Small.TLabel", justify="left")
+        hint.pack(anchor="w", fill="x", pady=(3, 0))
+        self._wrap(hint)
+        row += 1
 
-        nb = ttk.Notebook(f)
-        nb.pack(fill="both", expand=True, pady=(8, 4))
+        field(t("dest_label"))
+        where = ttk.Frame(grid)
+        where.grid(row=row, column=1, sticky="we", pady=(0, 8))
+        for value, key in (("inplace", "opt_in_place"), ("other", "opt_other_folder")):
+            ttk.Radiobutton(where, text=t(key).rstrip(":："), value=value, variable=self.var_where,
+                            style="Seg.Toolbutton", command=self._dest_changed).pack(side="left")
+        self.lbl_dest = ttk.Label(where, text=_short(self.dest_other, 60), style="Muted.TLabel")
+        self.lbl_dest.pack(side="left", padx=12)
+        ttk.Button(where, text=t("btn_browse"), command=self._pick_dest).pack(side="left")
+        row += 1
+
+        field(t("lbl_mode"))
+        flags = ttk.Frame(grid)
+        flags.grid(row=row, column=1, sticky="w")
+        for value, key in (("move", "opt_move"), ("copy", "opt_copy")):
+            ttk.Radiobutton(flags, text=t(key), value=value, variable=self.var_mode, style="Seg.Toolbutton",
+                            command=self._options_changed).pack(side="left")
+        self._chip(flags, "opt_remove_empty", self.var_remove_empty, self._options_changed).pack(side="left", padx=(24, 0))
+        self._chip(flags, "opt_include_untagged", self.var_untagged, self._options_changed).pack(side="left", padx=(8, 0))
+
+        nb = ttk.Notebook(body)
+        nb.pack(fill="both", expand=True, pady=(16, 0))
         self.notebook = nb
         nb.add(self._build_organize(nb), text=t("tab_organize"))
         nb.add(self._build_dupes(nb), text=t("tab_dupes"))
         nb.add(self._build_artists(nb), text=t("tab_artists"))
 
-        bottom = ttk.Frame(f)
-        bottom.pack(fill="x")
-        self.progress = ttk.Progressbar(bottom, mode="determinate", length=220)
-        self.progress.pack(side="left")
-        self.lbl_status = ttk.Label(bottom, text="", style="Muted.TLabel")
-        self.lbl_status.pack(side="left", padx=8, fill="x", expand=True)
-        self.btn_cancel = ttk.Button(bottom, text=t("btn_cancel"), command=self.cancel.set, state="disabled")
-        self.btn_cancel.pack(side="right")
-        self.btn_run = ttk.Button(bottom, text=t("btn_run"), style="Accent.TButton", command=self._run)
-        self.btn_run.pack(side="right", padx=4)
-        self.btn_undo = ttk.Button(bottom, text=t("btn_undo"), command=self._undo)
-        self.btn_undo.pack(side="right", padx=4)
-        self.btn_export = ttk.Button(bottom, text=t("btn_export_untagged"), command=self._export_untagged)
-        self.btn_export.pack(side="right", padx=4)
+        # action bar contents: buttons are packed first so they keep their width
+        self.btn_run = ttk.Button(bar, text=t("btn_run"), style="Accent.TButton", command=self._run)
+        self.btn_run.pack(side="right")
+        self.btn_cancel = ttk.Button(bar, text=t("btn_cancel"), command=self.cancel.set, state="disabled")
+        self.btn_cancel.pack(side="right", padx=(0, 8))
+        self.btn_undo = ttk.Button(bar, text=t("btn_undo"), command=self._undo)
+        self.btn_undo.pack(side="right", padx=(0, 8))
+        self.btn_export = ttk.Button(bar, text=t("btn_export_untagged"), command=self._export_untagged)
+        self.btn_export.pack(side="right", padx=(0, 8))
+        status = ttk.Frame(bar)
+        status.pack(side="left", fill="x", expand=True, padx=(0, 16))
+        self.lbl_status = ttk.Label(status, text="", style="Muted.TLabel")
+        self.lbl_status.pack(anchor="w", fill="x")
+        self._wrap(self.lbl_status)
+        self.progress = ttk.Progressbar(status, mode="determinate", length=220, style="Accent.Horizontal.TProgressbar")
+        self.progress.pack(anchor="w", pady=(6, 0))
         self._refresh_all()
 
+    @staticmethod
+    def _wrap(label: ttk.Label) -> None:
+        """Wrap the label's text at its current width, so long hints never run off the edge."""
+        label.bind("<Configure>", lambda e: label.configure(wraplength=max(200, e.width - 4)))
+
+    def _tab(self, parent) -> ttk.Frame:
+        return ttk.Frame(parent, padding=(16, 14, 16, 16))
+
     def _build_organize(self, parent) -> ttk.Frame:
-        tab = ttk.Frame(parent, padding=6)
-        self.lbl_summary = ttk.Label(tab, text="")
-        self.lbl_summary.pack(fill="x", pady=(0, 4))
+        tab = self._tab(parent)
+        self.lbl_summary = ttk.Label(tab, text="", style="SummaryMuted.TLabel")
+        self.lbl_summary.pack(fill="x", pady=(0, 10))
+        self.lbl_summary.bind("<Configure>", lambda e: self.lbl_summary.configure(wraplength=max(200, e.width - 28)))
         cols = ("check", "current", "new", "status", "artist")
-        tree = ttk.Treeview(tab, columns=cols, show="headings", selectmode="extended")
-        for c, key, width, stretch in (("check", "", 32, False), ("current", "col_current", 380, True),
-                                      ("new", "col_new", 380, True), ("status", "col_status", 120, False),
+        box = self._table_box(tab)
+        tree = ttk.Treeview(box, columns=cols, show="headings", selectmode="extended")
+        for c, key, width, stretch in (("check", "", 40, False), ("current", "col_current", 380, True),
+                                      ("new", "col_new", 380, True), ("status", "col_status", 130, False),
                                       ("artist", "col_artist", 220, False)):
-            tree.heading(c, text=t(key) if key else ON)
+            tree.heading(c, text=t(key) if key else ON, anchor="center" if c == "check" else "w")
             tree.column(c, width=width, stretch=stretch, anchor="center" if c == "check" else "w")
         tree.heading("check", command=self._toggle_all)
+        self._tags(tree)
         tree.tag_configure("conflict", background=CONFLICT_BG)
         tree.tag_configure("dup", foreground=DUP_FG)
         tree.tag_configure("guess", foreground=GUESS_FG)
-        tree.tag_configure("muted", foreground=MUTED)
-        self._attach_scroll(tab, tree)
+        tree.tag_configure("muted", foreground="#9aa1ab")
+        self._attach_scroll(box, tree)
         tree.bind("<Button-1>", self._on_org_click)
         tree.bind("<space>", lambda e: self._toggle_selected())
         self.tree = tree
+        self._build_drop_zone(box)
         return tab
 
+    def _build_drop_zone(self, box) -> None:
+        """Shown over the empty table until a folder is loaded; a click opens the picker."""
+        zone = tk.Canvas(box, bg=SURFACE, highlightthickness=0, cursor="hand2")
+        self.drop_zone = zone
+
+        def draw(_event=None) -> None:
+            zone.delete("all")
+            w, h = zone.winfo_width(), zone.winfo_height()
+            if w < 50 or h < 50:
+                return
+            m = 18
+            zone.create_rectangle(m, m, w - m, h - m, outline="#b9e3cf", dash=(6, 4), width=2, fill="#fbfefc")
+            cx, cy = w / 2, h / 2
+            if self._icon_big is not None:
+                zone.create_image(cx, cy - 46, image=self._icon_big)
+            zone.create_text(cx, cy + 8, text=t("drop_hint"), font=self.f_drop, fill=TEXT)
+            zone.create_text(cx, cy + 36, text=t("drop_sub"), font=self.f_small, fill=MUTED)
+            zone.create_text(cx, cy + 66, text=t("btn_pick_folder"), font=(self.f_base[0], 10, "bold"), fill=ACCENT)
+
+        zone.bind("<Configure>", draw)
+        zone.bind("<Button-1>", lambda e: self._pick_source())
+
     def _build_dupes(self, parent) -> ttk.Frame:
-        tab = ttk.Frame(parent, padding=6)
+        tab = self._tab(parent)
         bar = ttk.Frame(tab)
-        bar.pack(fill="x", pady=(0, 4))
-        ttk.Checkbutton(bar, text=t("opt_fingerprint"), variable=self.var_fp, command=self._fp_estimate).pack(side="left")
+        bar.pack(fill="x", pady=(0, 8))
+        ttk.Button(bar, text=t("btn_find_dupes"), command=self._find_dupes).pack(side="left")
+        self._chip(bar, "opt_fingerprint", self.var_fp, self._fp_estimate).pack(side="left", padx=(10, 0))
         self.lbl_fp = ttk.Label(bar, text="", style="Muted.TLabel")
         self.lbl_fp.pack(side="left", padx=8)
-        ttk.Button(bar, text=t("btn_find_dupes"), command=self._find_dupes).pack(side="left", padx=8)
-        ttk.Radiobutton(bar, text=t("opt_dupes_move", folder=self.prefs.dupes_name()), value="move",
-                        variable=self.var_dupes_action, command=self._options_changed).pack(side="left", padx=(20, 4))
         ttk.Radiobutton(bar, text=t("opt_dupes_trash"), value="trash", variable=self.var_dupes_action,
-                        command=self._options_changed).pack(side="left")
-        ttk.Label(tab, text=t("dupes_hint"), style="Muted.TLabel").pack(fill="x", pady=(0, 4))
+                        style="Seg.Toolbutton", command=self._options_changed).pack(side="right")
+        ttk.Radiobutton(bar, text=t("opt_dupes_move", folder=self.prefs.dupes_name()), value="move",
+                        variable=self.var_dupes_action, style="Seg.Toolbutton", command=self._options_changed).pack(side="right")
+        hint = ttk.Label(tab, text=t("dupes_hint"), style="Small.TLabel", justify="left")
+        hint.pack(fill="x", pady=(0, 10))
+        self._wrap(hint)
         cols = ("apply", "keep", "path", "format", "bitrate", "length")
-        tree = ttk.Treeview(tab, columns=cols, show="tree headings", selectmode="browse")
-        tree.column("#0", width=260, stretch=False)
-        tree.heading("#0", text=t("col_group"))
-        for c, key, width, stretch in (("apply", "col_apply", 60, False), ("keep", "col_keep", 60, False),
-                                      ("path", "col_current", 520, True), ("format", "col_format", 70, False),
+        box = self._table_box(tab)
+        tree = ttk.Treeview(box, columns=cols, show="tree headings", selectmode="browse")
+        tree.column("#0", width=270, stretch=False)
+        tree.heading("#0", text=t("col_group"), anchor="w")
+        for c, key, width, stretch in (("apply", "col_apply", 64, False), ("keep", "col_keep", 64, False),
+                                      ("path", "col_current", 500, True), ("format", "col_format", 70, False),
                                       ("bitrate", "col_bitrate", 100, False), ("length", "col_length", 70, False)):
-            tree.heading(c, text=t(key))
+            tree.heading(c, text=t(key), anchor="center" if c in ("apply", "keep") else "w")
             tree.column(c, width=width, stretch=stretch, anchor="center" if c in ("apply", "keep") else "w")
+        tree.column("bitrate", width=115)
+        self._tags(tree)
+        tree.tag_configure("group", background=HEAD_BG, font=(self.f_table[0], 10, "bold"))
         tree.tag_configure("nokeep", foreground=ERROR_FG)
-        tree.tag_configure("off", foreground=MUTED)
-        self._attach_scroll(tab, tree)
+        tree.tag_configure("off", foreground="#9aa1ab")
+        self._attach_scroll(box, tree)
         tree.bind("<Button-1>", self._on_dupe_click)
         self.dtree = tree
         return tab
 
     def _build_artists(self, parent) -> ttk.Frame:
-        tab = ttk.Frame(parent, padding=6)
+        tab = self._tab(parent)
         bar = ttk.Frame(tab)
-        bar.pack(fill="x", pady=(0, 4))
+        bar.pack(fill="x", pady=(0, 8))
         ttk.Button(bar, text=t("btn_rename_rep"), command=self._rename_rep).pack(side="left")
-        ttk.Button(bar, text=t("btn_ungroup"), command=self._ungroup).pack(side="left", padx=4)
-        ttk.Button(bar, text=t("btn_guess_yes"), command=lambda: self._answer_guess(True)).pack(side="left", padx=(16, 4))
-        ttk.Button(bar, text=t("btn_guess_no"), command=lambda: self._answer_guess(False)).pack(side="left")
+        ttk.Button(bar, text=t("btn_ungroup"), command=self._ungroup).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text=t("btn_guess_yes"), command=lambda: self._answer_guess(True)).pack(side="left", padx=(20, 0))
+        ttk.Button(bar, text=t("btn_guess_no"), command=lambda: self._answer_guess(False)).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text=t("btn_open_artists"), command=self._open_artists).pack(side="right")
-        ttk.Radiobutton(bar, text=t("opt_pref_latin"), value="latin", variable=self.var_pref,
-                        command=self._pref_changed).pack(side="right", padx=4)
-        ttk.Radiobutton(bar, text=t("opt_pref_original"), value="original", variable=self.var_pref,
-                        command=self._pref_changed).pack(side="right", padx=4)
-        ttk.Label(bar, text=t("lbl_name_preference")).pack(side="right", padx=4)
-        self.lbl_alias = ttk.Label(tab, text=t("artists_hint"), style="Muted.TLabel")
-        self.lbl_alias.pack(fill="x", pady=(0, 4))
+        # second row: the hint on the left, the name preference on the right
+        row2 = ttk.Frame(tab)
+        row2.pack(fill="x", pady=(0, 10))
+        pref = ttk.Frame(row2)
+        pref.pack(side="right")
+        ttk.Label(pref, text=t("lbl_name_preference"), style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        for value, key in (("original", "opt_pref_original"), ("latin", "opt_pref_latin")):
+            ttk.Radiobutton(pref, text=t(key), value=value, variable=self.var_pref, style="Seg.Toolbutton",
+                            command=self._pref_changed).pack(side="left")
+        self.lbl_alias = ttk.Label(row2, text=t("artists_hint"), style="Small.TLabel", justify="left")
+        self.lbl_alias.pack(side="left", fill="x", expand=True, padx=(0, 16))
+        self._wrap(self.lbl_alias)
         cols = ("variants", "files", "via")
-        tree = ttk.Treeview(tab, columns=cols, show="tree headings", selectmode="browse")
+        box = self._table_box(tab)
+        tree = ttk.Treeview(box, columns=cols, show="tree headings", selectmode="browse")
         tree.column("#0", width=260, stretch=False)
-        tree.heading("#0", text=t("col_rep_name"))
-        for c, key, width in (("variants", "col_variants", 520), ("files", "col_files", 70), ("via", "col_via", 200)):
-            tree.heading(c, text=t(key))
+        tree.heading("#0", text=t("col_rep_name"), anchor="w")
+        for c, key, width in (("variants", "col_variants", 520), ("files", "col_files", 70), ("via", "col_via", 220)):
+            tree.heading(c, text=t(key), anchor="w")
             tree.column(c, width=width, stretch=c == "variants")
+        self._tags(tree)
         tree.tag_configure("guess", foreground=GUESS_FG)
-        self._attach_scroll(tab, tree)
+        self._attach_scroll(box, tree)
         self.atree = tree
         return tab
 
+    def _table_box(self, parent) -> tk.Frame:
+        return self._card(parent, fill="both", expand=True)
+
     @staticmethod
-    def _attach_scroll(parent, tree: ttk.Treeview) -> None:
-        box = ttk.Frame(parent)
-        box.pack(fill="both", expand=True)
+    def _tags(tree: ttk.Treeview) -> None:
+        tree.tag_configure("odd", background=STRIPE)  # configured first: later tags win
+
+    @staticmethod
+    def _attach_scroll(box, tree: ttk.Treeview) -> None:
         sb = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=sb.set)
-        tree.pack(in_=box, side="left", fill="both", expand=True)
-        tree.lift(box)  # the box was created after the tree and would cover it
         sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
 
     # ------------------------------------------------------------------ events
     def _on_lang(self, _event=None) -> None:
         name = self.var_lang.get()
         code = next((c for c, n in i18n.LANG_NAMES.items() if n == name), i18n.DEFAULT_LANG)
         i18n.set_lang(code)
+        self._style()  # the UI font follows the language
         self._build()
         if self.scan is not None:
             self._replan()
@@ -330,7 +560,7 @@ class App:
         if folder:
             self.dest_other = os.path.abspath(folder)
             self.var_where.set("other")
-            self.lbl_dest.configure(text=self.dest_other)
+            self.lbl_dest.configure(text=_short(self.dest_other, 60))
             self._dest_changed()
 
     def _dest_changed(self) -> None:
@@ -340,7 +570,7 @@ class App:
                 self.var_where.set("inplace")
                 return
             self.dest_other = os.path.abspath(folder)
-            self.lbl_dest.configure(text=self.dest_other)
+            self.lbl_dest.configure(text=_short(self.dest_other, 60))
         if self.source:
             self.load_source(self.source)  # the dupes folder and a destination inside the source change what a scan sees
 
@@ -375,7 +605,7 @@ class App:
         if self.busy:
             return
         self.source = os.path.abspath(folder)
-        self.lbl_source.configure(text=self.source, style="TLabel")
+        self.lbl_source.configure(text=_short(self.source), style="Path.TLabel")
         self.scan, self.index, self.groups, self.plan = None, None, [], None
         self.overrides.clear()
         excl = session.excludes(self.source, self.dest(), self.prefs)
@@ -411,12 +641,12 @@ class App:
         problem = pattern_mod.validate(self.var_pattern.get())
         if problem:
             self.plan = None
-            self.lbl_summary.configure(text=t(problem), style="Error.TLabel")
+            self.lbl_summary.configure(text=t(problem), style="SummaryError.TLabel")
             self.btn_run.configure(state="disabled")
             return
         if self.var_mode.get() == "copy" and scan_mod.key_of(self.dest()) == scan_mod.key_of(self.source):
             self.plan = None
-            self.lbl_summary.configure(text=t("err_copy_in_place"), style="Error.TLabel")
+            self.lbl_summary.configure(text=t("err_copy_in_place"), style="SummaryError.TLabel")
             self.btn_run.configure(state="disabled")
             return
         self.plan = plan_mod.build(self.scan, self.options(), self.index, self.groups, self.overrides)
@@ -435,9 +665,13 @@ class App:
     def _fill_organize(self) -> None:
         tree = self.tree
         tree.delete(*tree.get_children())
+        if self.scan is None and not self.busy:
+            self.drop_zone.place(x=0, y=0, relwidth=1, relheight=1)  # empty state: a big drop target
+        else:
+            self.drop_zone.place_forget()
         if self.plan is None:
             if self.scan is None:
-                self.lbl_summary.configure(text=t("drop_hint"), style="Muted.TLabel")
+                self.lbl_summary.configure(text=t("drop_sub"), style="SummaryMuted.TLabel")
             return
         s = self.plan.summary()
         text = t("summary", **{k: s[k] for k in ("move", "same", "untagged", "dupes", "folders")})
@@ -445,10 +679,10 @@ class App:
             text += "   ·   " + t("msg_untagged_hint")
         if self.alias_error:
             text += "   ·   " + t("err_artists_file", path=self.prefs.artists_file(), error=self.alias_error)
-        self.lbl_summary.configure(text=text, style="TLabel")
+        self.lbl_summary.configure(text=text, style="Summary.TLabel")
         dest = self.plan.options.dest
-        for item in self.plan.items:
-            tags = []
+        for n, item in enumerate(self.plan.items):
+            tags = ["odd"] if n % 2 else []
             if item.status == plan_mod.CONFLICT:
                 tags.append("conflict")
             if item.status == plan_mod.DUP:
@@ -469,7 +703,7 @@ class App:
         tree.delete(*tree.get_children())
         for g in self.groups:
             label = t("dupe_group", n=g.id, stage=t(f"stage_{g.stage}"), count=len(g.members))
-            tags = ["nokeep"] if not g.keep else ([] if g.applied else ["off"])
+            tags = ["group"] + (["nokeep"] if not g.keep else ([] if g.applied else ["off"]))
             gid = f"g{g.id}"
             tree.insert("", "end", iid=gid, text=label, open=True, tags=tags,
                         values=(ON if g.applied else OFF, "", "", "", "", ""))
@@ -484,9 +718,9 @@ class App:
         tree.delete(*tree.get_children())
         if self.index is None:
             return
-        for c in self.index.merged():
+        for n, c in enumerate(self.index.merged()):
             via = ", ".join(t(f"via_{v}") for v in sorted(c.via)) or t("via_alias")
-            tree.insert("", "end", iid=f"c{c.id}", text=c.rep,
+            tree.insert("", "end", iid=f"c{c.id}", text=c.rep, tags=["odd"] if n % 2 else [],
                         values=(" / ".join(c.names), c.files, via))
         for i, g in enumerate(self.index.guesses):
             tree.insert("", "end", iid=f"q{i}", text=f"{g.proposed} ?", tags=["guess"],
@@ -751,6 +985,7 @@ class App:
             return
         self.busy = False
         self.btn_cancel.configure(state="disabled")
+        self.progress.configure(value=0)  # an idle bar stays empty, not "full"
         cancelled = self.cancel.is_set()
         if kind == "error":
             self.lbl_status.configure(text=str(msg[1]))

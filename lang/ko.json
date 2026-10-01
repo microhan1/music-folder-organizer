@@ -1,6 +1,9 @@
 {
   "app_title": "음악 폴더 정리",
   "drop_hint": "음악 폴더를 여기에 끌어다 놓으세요",
+  "app_tagline": "태그로 가수·앨범 폴더 정리 · 중복 찾기 · 언제든 되돌리기",
+  "drop_sub": "하위 폴더까지 읽습니다. 실행을 누르기 전에는 아무것도 옮기지 않습니다.",
+  "lbl_mode": "방식",
   "lbl_language": "언어",
   "source_label": "원본 폴더",
   "btn_pick_folder": "폴더 선택…",
