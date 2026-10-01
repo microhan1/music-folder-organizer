@@ -32,6 +32,7 @@ class Prefs:
     artist_no_merge: list = dataclasses.field(default_factory=list)
     artist_rejected: list = dataclasses.field(default_factory=list)  # [[name, name, ...], ...]
     fpcalc_path: str = ""
+    tag_filler_path: str = ""  # music-tag-filler.exe, asked for once
     last_log: str = ""
 
     def fallback(self, key: str) -> str:
@@ -69,6 +70,7 @@ def load() -> Prefs:
         artist_no_merge=[s for s in typed("artist_no_merge", list) if isinstance(s, str)],
         artist_rejected=[[s for s in g if isinstance(s, str)] for g in typed("artist_rejected", list) if isinstance(g, list)],
         fpcalc_path=typed("fpcalc_path", str),
+        tag_filler_path=typed("tag_filler_path", str),
         last_log=typed("last_log", str),
     )
     if p.dupes_action not in ("move", "trash"):

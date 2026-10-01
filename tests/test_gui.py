@@ -88,7 +88,7 @@ def test_load_preview_and_summary(app, lib):
     app.wait()
     assert app.plan is not None and len(app.tree.get_children()) == 5
     s = app.plan.summary()
-    assert s["dupes"] == 1  # the identical copy is applied automatically
+    assert s["dupes"] == 2  # the identical copy, and the 128k copy of the same album's song
     assert app.lbl_summary.cget("text").startswith(f"Move {s['move']}")
     assert str(app.btn_run.cget("state")) == "normal"
     assert len(app.dtree.get_children()) == 2  # identical pair + same song (128k vs 320k)
@@ -117,11 +117,12 @@ def test_stage_two_group_apply_and_keep_rules(app, lib, dialogs):
     app.load_source(str(lib))
     app.wait()
     g2 = next(g for g in app.groups if g.stage == 2)
-    assert not g2.applied
+    assert g2.applied and not g2.cross_album  # same album: applied by default
     before = app.plan.summary()["dupes"]
-    g2.applied = True
+    g2.applied = False
     app._replan()
-    assert app.plan.summary()["dupes"] == before + 1
+    assert app.plan.summary()["dupes"] == before - 1
+    g2.applied = True
     g2.keep.clear()
     app._replan()
     app._run()  # refused: an applied group keeps nothing
@@ -318,3 +319,117 @@ def test_fingerprint_button(app, lib, dialogs):
     app._find_dupes()
     app.wait()
     assert "duplicate groups" in app.lbl_status.cget("text")
+
+
+# ------------------------------------------------------------------ v0.2.0 item 3: music-tag-filler hand-off
+class FakeProc:
+    def __init__(self, cmd, cwd=None):
+        self.cmd, self.cwd, self.done = cmd, cwd, False
+
+    def poll(self):
+        return 0 if self.done else None
+
+
+@pytest.fixture
+def launched(monkeypatch):
+    import gui
+
+    procs = []
+    monkeypatch.setattr(gui.subprocess, "Popen", lambda cmd, cwd=None: procs.append(FakeProc(cmd, cwd)) or procs[-1])
+    return procs
+
+
+def test_tag_filler_gets_only_files_it_can_handle(app, lib, launched, tmp_path):
+    put(lib, "song-128.mp3", "misc/untagged.mp3")  # no tags, mp3: goes over
+    exe = tmp_path / "tools" / "music-tag-filler.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    app.prefs.tag_filler_path = str(exe)
+    app.load_source(str(lib))
+    app.wait()
+    assert app.btn_tag_filler.winfo_manager() == "pack"
+    app._open_tag_filler()
+    assert len(launched) == 1
+    cmd = launched[0].cmd
+    assert cmd[0] == str(exe) and cmd[1:] == [str(lib / "misc" / "untagged.mp3")]  # noise.wav is left out
+    assert "1" in app.lbl_status.cget("text") and "wav" in app.lbl_status.cget("text")
+    # the window closes: tags are read again
+    launched[0].done = True
+    app.pump(0.4)
+    app.wait()
+    assert app._filler is None and "Music Tag Filler closed" in app.lbl_status.cget("text")
+
+
+def test_tag_filler_button_hidden_without_untagged_files(app, tmp_path):
+    root = tmp_path / "tagged"
+    put(root, "song-128.mp3", "a.mp3", title="T", artist="A", album="B", tracknumber="1")
+    app.load_source(str(root))
+    app.wait()
+    assert app.btn_tag_filler.winfo_manager() == ""
+
+
+def test_tag_filler_is_asked_for_once(app, lib, launched, dialogs, tmp_path, monkeypatch):
+    import gui
+
+    put(lib, "song-128.mp3", "misc/untagged.mp3")
+    monkeypatch.setattr(gui.i18n, "app_dir", lambda: str(tmp_path / "nowhere" / "app"))
+    monkeypatch.setattr(gui.filedialog, "askopenfilename", lambda **k: str(tmp_path / "picked.exe"))
+    (tmp_path / "picked.exe").write_bytes(b"")
+    app.prefs.tag_filler_path = ""
+    app.load_source(str(lib))
+    app.wait()
+    app._open_tag_filler()
+    assert launched[0].cmd[0] == str(tmp_path / "picked.exe")
+    assert i18n.load_settings()["tag_filler_path"] == str(tmp_path / "picked.exe")
+
+
+def test_tag_filler_dialog_cancelled(app, lib, launched, tmp_path, monkeypatch):
+    import gui
+
+    put(lib, "song-128.mp3", "misc/untagged.mp3")
+    monkeypatch.setattr(gui.i18n, "app_dir", lambda: str(tmp_path / "nowhere" / "app"))
+    monkeypatch.setattr(gui.filedialog, "askopenfilename", lambda **k: "")
+    app.prefs.tag_filler_path = ""
+    app.load_source(str(lib))
+    app.wait()
+    app._open_tag_filler()
+    assert launched == []
+
+
+def test_tag_filler_long_list_passes_folders(app, lib, launched, tmp_path, monkeypatch):
+    import gui
+
+    for i in range(3):
+        put(lib, "song-128.mp3", f"raw{i}/u.mp3")
+    exe = tmp_path / "music-tag-filler.exe"
+    exe.write_bytes(b"")
+    app.prefs.tag_filler_path = str(exe)
+    monkeypatch.setattr(gui, "CMDLINE_LIMIT", 10)
+    app.load_source(str(lib))
+    app.wait()
+    app._open_tag_filler()
+    assert sorted(launched[0].cmd[1:]) == [str(lib / f"raw{i}") for i in range(3)]
+
+
+def test_tag_filler_nothing_to_send(app, lib, launched, dialogs):
+    app.load_source(str(lib))  # only noise.wav lacks tags
+    app.wait()
+    app._open_tag_filler()
+    assert launched == [] and "mp3" in dialogs["shown"][-1][1]
+
+
+def test_tag_filler_launch_failure(app, lib, dialogs, tmp_path, monkeypatch):
+    import gui
+
+    def boom(cmd, cwd=None):
+        raise OSError(2, "not found")
+
+    put(lib, "song-128.mp3", "misc/untagged.mp3")
+    exe = tmp_path / "music-tag-filler.exe"
+    exe.write_bytes(b"")
+    app.prefs.tag_filler_path = str(exe)
+    monkeypatch.setattr(gui.subprocess, "Popen", boom)
+    app.load_source(str(lib))
+    app.wait()
+    app._open_tag_filler()
+    assert dialogs["shown"][-1][0] == "showerror" and app._filler is None

@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dest", help=t("cli_dest"))
     p.add_argument("--copy", action="store_true", help=t("cli_copy"))
     p.add_argument("--dedupe", action="store_true", help=t("cli_dedupe"))
+    p.add_argument("--dedupe-across-albums", action="store_true", help=t("cli_dedupe_across"))
     p.add_argument("--fingerprint", action="store_true", help=t("cli_fingerprint"))
     p.add_argument("--trash", action="store_true", help=t("cli_trash"))
     p.add_argument("--include-untagged", action="store_true", help=t("cli_include_untagged"))
@@ -129,12 +130,12 @@ def run_cli(args: argparse.Namespace) -> int:
     if not result.tracks:
         print(t("msg_no_music"))
         return 1
-    index, alias_error = session.make_index(result.tracks, p)
+    index, alias_error = session.make_index(result.tracks, p, session.existing_folders(result, dest))
     if alias_error:
         print(t("err_artists_file", path=p.artists_file(), error=alias_error), file=sys.stderr)
     opts = session.options(p, root, dest, mode)
     groups = []
-    if args.dedupe or args.fingerprint:
+    if args.dedupe or args.fingerprint or args.dedupe_across_albums:
         exe = dedupe.find_fpcalc(p.fpcalc_path) if args.fingerprint else None
         if args.fingerprint:
             if exe:
@@ -142,7 +143,8 @@ def run_cli(args: argparse.Namespace) -> int:
             else:
                 print(t("err_no_fpcalc"), file=sys.stderr)
         groups = dedupe.find(result.tracks, index.rep, fingerprint=bool(exe), fpcalc=exe,
-                             preferred=session.preferred_paths(result, opts, index))
+                             preferred=session.preferred_paths(result, opts, index),
+                             across_albums=args.dedupe_across_albums)
     the_plan = plan_mod.build(result, opts, index, groups)
 
     for item in the_plan.items:

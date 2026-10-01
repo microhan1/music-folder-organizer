@@ -6,7 +6,7 @@ import os
 
 import i18n
 import plan as plan_mod
-from artists import ArtistIndex, load_aliases
+from artists import ArtistIndex, folder_key, load_aliases
 from mover import key_in
 from prefs import Prefs
 from scan import ScanResult, Track, key_of
@@ -27,9 +27,23 @@ def excludes(root: str, dest: str, p: Prefs) -> list[str]:
     return out
 
 
-def make_index(tracks: list[Track], p: Prefs) -> tuple[ArtistIndex, str]:
+def existing_folders(scan: ScanResult | None, dest: str | None = None, depth: int = 3) -> set[str]:
+    """Names (folder_key) of folders already on disk in the source and, when it lies
+    elsewhere, the first levels of the destination."""
+    names = {folder_key(os.path.basename(info.path)) for info in scan.dirs.values()} if scan else set()
+    if dest and os.path.isdir(dest) and not (scan and key_in(dest, scan.root)):
+        base = os.path.abspath(dest).rstrip(os.sep).count(os.sep)
+        for here, subdirs, _ in os.walk(dest):
+            names.update(folder_key(d) for d in subdirs)
+            if here.rstrip(os.sep).count(os.sep) - base >= depth - 1:
+                subdirs[:] = []
+    return names
+
+
+def make_index(tracks: list[Track], p: Prefs, existing: set[str] | None = None) -> tuple[ArtistIndex, str]:
     aliases, error = load_aliases(p.artists_file())
-    index = ArtistIndex(tracks, aliases, p.artist_name_preference, p.artist_no_merge, p.artist_rejected)
+    index = ArtistIndex(tracks, aliases, p.artist_name_preference, p.artist_no_merge, p.artist_rejected,
+                        existing=existing)
     return index, error
 
 

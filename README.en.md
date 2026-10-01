@@ -68,15 +68,15 @@ Empty values become fallback names such as "Unknown Artist" and "Unknown Album" 
 
 ## Duplicates
 
-| Stage | Rule | In the preview |
-| --- | --- | --- |
-| 1. Identical | same file content (SHA-1) | automatically |
-| 2. Same song | same artist + title, lengths within 2 s | after you tick Apply |
-| 3. Sound | acoustic fingerprints (Chromaprint, compared locally); finds the same recording even with different tags | after you tick Apply |
+| Stage | Rule |
+| --- | --- |
+| 1. Identical | same file content (SHA-1) |
+| 2. Same song | same artist + title, lengths within 2 s |
+| 3. Sound | acoustic fingerprints (Chromaprint, compared locally); finds the same recording even with different tags |
 
-Each group recommends the file to keep: lossless (flac) → higher bitrate → the one already in place. Click **Keep** to change it. The others are not deleted; they move to the `_Duplicates` folder. The recycle bin is an option, but files sent there do not come back with this tool's Undo.
+**Only extra copies within an album go.** A song that is on several albums (an original album and a best-of) is shown as one group but **keeps one file per album** (the group name says "n albums"). Within an album the lossless (flac) file wins, then the higher bitrate, then the one already in place. Change it with **Keep**, or untick **Apply** to leave a whole group alone. On the command line, `--dedupe-across-albums` keeps only one copy even across albums.
 
-Why stage 2 is not applied automatically: a song on a best-of album matches the same song on the original album, and moving it away would leave a hole in the album.
+The others are not deleted; they move to the `_Duplicates` folder. The recycle bin is an option, but files sent there do not come back with this tool's Undo.
 
 ## Artist merging
 
@@ -103,7 +103,12 @@ python main.py ./music --undo                          # undo the latest run
 
 ## With Music Tag Filler
 
-If tags are empty, fill them first with [Music Tag Filler](https://github.com/microhan1/music-tag-filler). **Export missing-tag list** writes those files to `untagged.txt`. Both tools can share one `artists.json` (`artists_path` in `settings.json`).
+If tags are empty, fill them first with [Music Tag Filler](https://github.com/microhan1/music-tag-filler).
+
+- When some files lack tags, **Open in Music Tag Filler** appears at the right of the summary line. It opens those files (mp3, flac, m4a, ogg) there, and when that window closes the tags are read again here. Its location is asked for once and remembered (found automatically next to this program or in `music-tag-filler\dist` beside it).
+- The MusicBrainz and iTunes artist IDs Music Tag Filler writes join different spellings of one artist into one folder.
+- Its backups (`.tagbak.json`) move with the files, so its Undo still works after the folders are reorganized.
+- **Export missing-tag list** writes those files to `untagged.txt`.
 
 ## What it does not do
 

@@ -68,7 +68,7 @@ def build(root, dest=None, mode="move", groups=None, artists=None, overrides=Non
     p = prefs_mod.Prefs(artists_path=artists or os.path.join(str(root), "..", "artists.json"), **pref)
     dest = str(dest or root)
     res = scan_mod.scan(str(root), session.excludes(str(root), dest, p))
-    index, _ = session.make_index(res.tracks, p)
+    index, _ = session.make_index(res.tracks, p, session.existing_folders(res, dest))
     opts = session.options(p, str(root), dest, mode)
     if groups == "find":
         groups = dedupe.find(res.tracks, index.rep)

@@ -71,6 +71,14 @@ def normalize_text(text: str) -> str:
     return "".join(ch for ch in text if ch.isalnum())
 
 
+def folder_key(name: str) -> str:
+    """How a name compares with folder names on disk: as the pattern would write it,
+    case-insensitive and NFC."""
+    from pattern import sanitize
+
+    return unicodedata.normalize("NFC", sanitize(name)).casefold()
+
+
 def is_collab(name: str) -> bool:
     return bool(_COLLAB.search(name))
 
@@ -155,9 +163,13 @@ class _UF:
 class ArtistIndex:
     def __init__(self, tracks: list[Track], aliases: dict[str, list[str]] | None = None,
                  preference: str = "original", no_merge: list[str] | None = None,
-                 rejected: list[list[str]] | None = None) -> None:
+                 rejected: list[list[str]] | None = None, existing: set[str] | None = None) -> None:
+        """``existing``: folder names already on disk (see folder_key). A spelling that
+        already has a folder stays the name, so a later run does not rename the folder
+        just because the file counts changed (e.g. duplicates went away)."""
         self.aliases = aliases or {}
         self.preference = preference
+        self.existing = existing or set()
         self.no_merge = {normalize(n) for n in (no_merge or [])}
         self.rejected = {tuple(sorted(normalize(n) for n in g)) for g in (rejected or [])}
         self.counts: Counter[str] = Counter()
@@ -240,11 +252,13 @@ class ArtistIndex:
         self.guesses = self._guess(tracks)
 
     def _pick(self, names: list[str]) -> str:
-        """Most files among the spellings in the preferred script, else most files."""
+        """Among the spellings in the preferred script: one that already has a folder,
+        then the one on most files."""
         want_latin = self.preference == "latin"
         preferred = [n for n in names if is_latin(n) == want_latin and script_of(n) != "none"]
         pool = preferred or names
-        return sorted(pool, key=lambda n: (-self.counts[n], self._order.get(n, 0)))[0]
+        return sorted(pool, key=lambda n: (0 if folder_key(n) in self.existing else 1,
+                                           -self.counts[n], self._order.get(n, 0)))[0]
 
     def cluster_of(self, name: str) -> Cluster | None:
         return self._cluster_of.get(name)

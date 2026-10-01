@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -52,6 +53,9 @@ GUESS_FG = "#2563eb"
 ERROR_FG = "#c62828"
 ERROR_SOFT = "#fdecec"
 MAX_LIST = 30  # lines of a failure list shown in a dialog
+TAG_FILLER_EXE = "music-tag-filler.exe"
+TAG_FILLER_EXTS = {".mp3", ".flac", ".m4a", ".ogg"}  # what music-tag-filler reads and writes
+CMDLINE_LIMIT = 30000  # Windows allows 32 767 characters; keep a margin
 
 # UI font per language; tables always use a font with Hangul, kana and hanzi,
 # because file names mix scripts whatever the UI language is
@@ -137,6 +141,8 @@ class App:
         self.queue: queue.Queue = queue.Queue()
         self.alias_error = ""
         self._plan_job: str | None = None
+        self._filler: subprocess.Popen | None = None  # music-tag-filler opened from here
+        self._rescanned_note = False
         self.var_pattern = tk.StringVar(value=self.prefs.pattern)
         self.var_where = tk.StringVar(value="inplace")
         self.var_dest = tk.StringVar()
@@ -153,7 +159,7 @@ class App:
         screen_h = root.winfo_screenheight() - 90
         height = max(700, min(1000, screen_h))
         root.geometry(f"1280x{height}")
-        root.minsize(1000, min(800, screen_h))  # below ~800 px the table has no rows left
+        root.minsize(1000, min(840, screen_h))  # below ~840 px the duplicates table has no rows left
         self._icon = self._icon_big = None
         icon = os.path.join(i18n.resource_dir(), "assets", "icon.png")
         if os.path.exists(icon):
@@ -331,10 +337,11 @@ class App:
         field(t("source_label"))
         src = ttk.Frame(grid)
         src.grid(row=row, column=1, sticky="we", pady=(0, 8))
+        # the button is packed first so a long path shrinks, not the button (LESSONS A15)
+        ttk.Button(src, text=t("btn_pick_folder"), command=self._pick_source).pack(side="right", padx=(12, 0))
         self.lbl_source = ttk.Label(src, text=_short(self.source) if self.source else t("drop_hint"),
                                     style="Path.TLabel" if self.source else "Muted.TLabel")
         self.lbl_source.pack(side="left", fill="x", expand=True, pady=(5, 0))
-        ttk.Button(src, text=t("btn_pick_folder"), command=self._pick_source).pack(side="right")
         row += 1
 
         field(t("pattern_label"))
@@ -407,8 +414,12 @@ class App:
 
     def _build_organize(self, parent) -> ttk.Frame:
         tab = self._tab(parent)
-        self.lbl_summary = ttk.Label(tab, text="", style="SummaryMuted.TLabel")
-        self.lbl_summary.pack(fill="x", pady=(0, 10))
+        head = ttk.Frame(tab)
+        head.pack(fill="x", pady=(0, 10))
+        # shown only while some files lack tags (see _fill_organize)
+        self.btn_tag_filler = ttk.Button(head, text=t("btn_open_tag_filler"), command=self._open_tag_filler)
+        self.lbl_summary = ttk.Label(head, text="", style="SummaryMuted.TLabel")
+        self.lbl_summary.pack(side="left", fill="x", expand=True)
         self.lbl_summary.bind("<Configure>", lambda e: self.lbl_summary.configure(wraplength=max(200, e.width - 28)))
         cols = ("check", "current", "new", "status", "artist")
         box = self._table_box(tab)
@@ -471,14 +482,14 @@ class App:
         cols = ("apply", "keep", "path", "format", "bitrate", "length")
         box = self._table_box(tab)
         tree = ttk.Treeview(box, columns=cols, show="tree headings", selectmode="browse")
-        tree.column("#0", width=270, stretch=False)
+        tree.column("#0", width=370, stretch=False)
         tree.heading("#0", text=t("col_group"), anchor="w")
         for c, key, width, stretch in (("apply", "col_apply", 64, False), ("keep", "col_keep", 64, False),
-                                      ("path", "col_current", 500, True), ("format", "col_format", 70, False),
-                                      ("bitrate", "col_bitrate", 100, False), ("length", "col_length", 70, False)):
+                                      ("path", "col_current", 360, True), ("format", "col_format", 60, False),
+                                      ("bitrate", "col_bitrate", 100, False), ("length", "col_length", 60, False)):
             tree.heading(c, text=t(key), anchor="center" if c in ("apply", "keep") else "w")
             tree.column(c, width=width, stretch=stretch, anchor="center" if c in ("apply", "keep") else "w")
-        tree.column("bitrate", width=115)
+        tree.column("bitrate", width=112)
         self._tags(tree)
         tree.tag_configure("group", background=HEAD_BG, font=(self.f_table[0], 10, "bold"))
         tree.tag_configure("nokeep", foreground=ERROR_FG)
@@ -625,12 +636,11 @@ class App:
                                 cancel=self.cancel)
             if res.cancelled:
                 return ("scanned", None)
-            index, err = session.make_index(res.tracks, self.prefs)
+            index, err = session.make_index(res.tracks, self.prefs, session.existing_folders(res, opts.dest))
             pref = session.preferred_paths(res, opts, index)
             groups = dedupe.find(res.tracks, index.rep, preferred=pref, cancel=self.cancel,
                                  progress=lambda ph, d, n: self.queue.put(("progress", d, n, "msg_hashing")))
-            for g in groups:
-                g.applied = g.stage == 1
+            # every group is applied: its recommendation already keeps one file per album
             return ("scanned", (res, index, err, groups))
 
         self._start(work, "msg_scanning_short")
@@ -638,7 +648,8 @@ class App:
     def _reindex(self) -> None:
         if self.scan is None:
             return
-        self.index, self.alias_error = session.make_index(self.scan.tracks, self.prefs)
+        self.index, self.alias_error = session.make_index(self.scan.tracks, self.prefs,
+                                                          session.existing_folders(self.scan, self.dest()))
         self._replan()
 
     def _replan(self) -> None:
@@ -677,6 +688,13 @@ class App:
             self.drop_zone.place(x=0, y=0, relwidth=1, relheight=1)  # empty state: a big drop target
         else:
             self.drop_zone.place_forget()
+        has_untagged = self.plan is not None and bool(self.plan.untagged())
+        packed = bool(self.btn_tag_filler.winfo_manager())  # winfo_ismapped is False on a hidden tab
+        if has_untagged and not packed:
+            # packed later than the label, so "before=" puts it first in line (LESSONS A15/A18)
+            self.btn_tag_filler.pack(side="right", padx=(10, 0), before=self.lbl_summary)
+        elif not has_untagged and packed:
+            self.btn_tag_filler.pack_forget()
         if self.plan is None:
             if self.scan is None:
                 self.lbl_summary.configure(text=t("drop_sub"), style="SummaryMuted.TLabel")
@@ -715,6 +733,8 @@ class App:
         tree.delete(*tree.get_children())
         for g in self.groups:
             label = t("dupe_group", n=g.id, stage=t(f"stage_{g.stage}"), count=len(g.members))
+            if g.cross_album:
+                label += " · " + t("dupe_cross", count=g.albums)
             tags = ["group"] + (["nokeep"] if not g.keep else ([] if g.applied else ["off"]))
             gid = f"g{g.id}"
             tree.insert("", "end", iid=gid, text=label, open=True, tags=tags,
@@ -821,8 +841,6 @@ class App:
         def work():
             groups = dedupe.find(tracks, index.rep, fingerprint=fp, fpcalc=exe, preferred=pref, cancel=self.cancel,
                                  progress=lambda ph, d, n: self.queue.put(("progress", d, n, f"msg_{'fingerprinting' if ph == 'fingerprint' else 'hashing'}")))
-            for g in groups:
-                g.applied = g.stage == 1
             return ("dupes", groups)
 
         self._start(work, "msg_hashing")
@@ -944,6 +962,64 @@ class App:
 
         self._start(work, "msg_undoing")
 
+    # ------------------------------------------------------------------ hand-off to music-tag-filler
+    def _find_tag_filler(self) -> str | None:
+        """The saved path, else a music-tag-filler.exe next to this program or in the
+        sibling repository's dist folder; else ask once and remember the answer."""
+        here = i18n.app_dir()
+        candidates = [self.prefs.tag_filler_path] if self.prefs.tag_filler_path else []
+        for base in (here, os.path.dirname(here), os.path.dirname(os.path.dirname(here))):
+            candidates += [os.path.join(base, TAG_FILLER_EXE),
+                           os.path.join(base, "music-tag-filler", "dist", TAG_FILLER_EXE)]
+        for c in candidates:
+            if c and os.path.isfile(c):
+                return c
+        path = filedialog.askopenfilename(title=t("dlg_pick_tag_filler"), initialfile=TAG_FILLER_EXE,
+                                          filetypes=[("music-tag-filler", "*.exe *.py")])
+        if not path:
+            return None
+        self.prefs.tag_filler_path = os.path.abspath(path)
+        prefs_mod.save(self.prefs)
+        return self.prefs.tag_filler_path
+
+    def _open_tag_filler(self) -> None:
+        if self.plan is None or self.busy:
+            return
+        untagged = [i.track for i in self.plan.untagged() if not i.track.error]
+        files = [tr.path for tr in untagged if os.path.splitext(tr.path)[1].lower() in TAG_FILLER_EXTS]
+        skipped = len(self.plan.untagged()) - len(files)
+        if not files:
+            messagebox.showinfo(t("btn_open_tag_filler"), t("msg_tag_filler_none"))
+            return
+        exe = self._find_tag_filler()
+        if exe is None:
+            return
+        args, folders = files, 0
+        if sum(len(f) + 3 for f in files) > CMDLINE_LIMIT:  # Windows caps a command line at 32 767 characters
+            args = sorted({os.path.dirname(f) for f in files})
+            folders = len(args)
+        cmd = [sys.executable, exe, *args] if exe.lower().endswith(".py") and not getattr(sys, "frozen", False) else [exe, *args]
+        try:
+            self._filler = subprocess.Popen(cmd, cwd=os.path.dirname(exe))
+        except OSError as exc:
+            messagebox.showerror(t("btn_open_tag_filler"), t("err_tag_filler_launch", error=exc))
+            return
+        text = t("msg_tag_filler_started", count=len(files))
+        if skipped:
+            text += " " + t("msg_tag_filler_skipped", count=skipped)
+        if folders:
+            text += " " + t("msg_tag_filler_folders", count=folders)
+        self.lbl_status.configure(text=text)
+
+    def _check_tag_filler(self) -> None:
+        """Called from the poll loop: when music-tag-filler closes, read the tags again."""
+        if self._filler is None or self._filler.poll() is None or self.busy:
+            return
+        self._filler = None
+        if self.source and os.path.isdir(self.source):
+            self._rescanned_note = True
+            self.load_source(self.source)
+
     def _export_untagged(self) -> None:
         if self.plan is None:
             return
@@ -986,6 +1062,7 @@ class App:
                 self._handle(msg)
         except queue.Empty:
             pass
+        self._check_tag_filler()
         self.root.after(100, self._poll)
 
     def _handle(self, msg) -> None:
@@ -1009,6 +1086,9 @@ class App:
                 self.scan, self.index, self.alias_error, self.groups = msg[1]
                 n = len(self.scan.tracks)
                 self.lbl_status.configure(text=t("msg_scanned", count=n) if n else t("msg_no_music"))
+                if self._rescanned_note:  # back from music-tag-filler
+                    self._rescanned_note = False
+                    self.lbl_status.configure(text=t("msg_rescanned_after_fill", count=n))
         elif kind == "dupes":
             self.groups = msg[1] if not cancelled else self.groups
             self.lbl_status.configure(text=t("status_cancelled") if cancelled else t("msg_dupes_found", count=len(self.groups)))

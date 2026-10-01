@@ -45,9 +45,20 @@ class DupeGroup:
     members: list[Track]
     keep: set[str]  # key_of(path) of files to keep
     applied: bool = True  # the preview sends the others away only when applied
+    albums: int = 1  # how many albums the group spans; one file of each is kept by default
+
+    @property
+    def cross_album(self) -> bool:
+        return self.albums > 1
 
     def removable(self) -> list[Track]:
         return [t for t in self.members if key_of(t.path) not in self.keep]
+
+
+def album_key(track: Track) -> str:
+    """Two files are on the same album when the album names match after normalizing
+    (two files without an album name count as the same unknown album)."""
+    return normalize_text(track.tags.album)
 
 
 def fp_workers() -> int:
@@ -106,10 +117,15 @@ class _UF:
 
 def find(tracks: list[Track], artist_map: Callable[[str], str] = lambda s: s, *,
          fingerprint: bool = False, fpcalc: str | None = None, preferred: set[str] | None = None,
-         progress: ProgressFn | None = None, cancel: threading.Event | None = None) -> list[DupeGroup]:
+         across_albums: bool = False, progress: ProgressFn | None = None,
+         cancel: threading.Event | None = None) -> list[DupeGroup]:
+    """Groups of duplicates. A song that is on two albums (an original album and a
+    best-of) is grouped but, unless ``across_albums``, one file per album is kept:
+    only extra copies within one album are recommended to go."""
     preferred = preferred or set()
     by_key = {key_of(t.path): t for t in tracks}
-    uf = _UF()
+    uf = _UF()  # every link: what the duplicates tab shows as one group
+    same = _UF()  # links within one album only: each of its clusters keeps one file
 
     # 1. identical: hash only files that share a size
     by_size: dict[int, list[Track]] = {}
@@ -133,6 +149,7 @@ def find(tracks: list[Track], artist_map: Callable[[str], str] = lambda s: s, *,
     for keys in hashes.values():
         for k in keys[1:]:
             uf.union(keys[0], k, 1)
+            same.union(keys[0], k, 1)  # identical bytes: identical tags, same album
 
     # 2. same song: unified artist + title, close lengths
     by_song: dict[tuple[str, str], list[Track]] = {}
@@ -142,7 +159,7 @@ def find(tracks: list[Track], artist_map: Callable[[str], str] = lambda s: s, *,
         if artist and title:
             by_song.setdefault((normalize(artist_map(artist)), title), []).append(t)
     for group in by_song.values():
-        _link_close_lengths(group, uf, 2)
+        _link_close_lengths(group, uf, 2, same)
 
     # 3. same recording by sound
     if fingerprint:
@@ -151,7 +168,7 @@ def find(tracks: list[Track], artist_map: Callable[[str], str] = lambda s: s, *,
             prints = _fingerprints(exe, tracks, progress, cancel)
             if cancel is not None and cancel.is_set():
                 return []
-            _link_by_sound(tracks, prints, uf)
+            _link_by_sound(tracks, prints, uf, same)
 
     members: dict[str, list[Track]] = {}
     for k in list(uf.parent):
@@ -161,23 +178,36 @@ def find(tracks: list[Track], artist_map: Callable[[str], str] = lambda s: s, *,
         if len(ts) < 2:
             continue
         ts.sort(key=lambda t: rank_key(t, preferred))
-        groups.append(DupeGroup(0, uf.stage.get(root, 2), ts, {key_of(ts[0].path)}))
+        clusters: dict[str, Track] = {}  # best file of each album cluster (ts is ranked)
+        for t in ts:
+            clusters.setdefault(same.find(key_of(t.path)), t)
+        keep = {key_of(ts[0].path)} if across_albums else {key_of(t.path) for t in clusters.values()}
+        groups.append(DupeGroup(0, uf.stage.get(root, 2), ts, keep, albums=len(clusters)))
     groups.sort(key=lambda g: g.members[0].path.casefold())
     for i, g in enumerate(groups, 1):
         g.id = i
     return groups
 
 
-def _link_close_lengths(group: list[Track], uf: _UF, stage: int) -> None:
+def _link_close_lengths(group: list[Track], uf: _UF, stage: int, same: _UF) -> None:
     if len(group) < 2:
         return
     group = sorted(group, key=lambda t: t.length)
-    anchor = group[0]
+    clusters: list[list[Track]] = [[group[0]]]
     for t in group[1:]:
-        if t.length - anchor.length <= LENGTH_TOLERANCE:
-            uf.union(key_of(anchor.path), key_of(t.path), stage)
+        if t.length - clusters[-1][0].length <= LENGTH_TOLERANCE:
+            clusters[-1].append(t)
         else:
-            anchor = t
+            clusters.append([t])
+    for cluster in clusters:
+        for t in cluster[1:]:
+            uf.union(key_of(cluster[0].path), key_of(t.path), stage)
+        by_album: dict[str, list[Track]] = {}
+        for t in cluster:
+            by_album.setdefault(album_key(t), []).append(t)
+        for tracks in by_album.values():
+            for t in tracks[1:]:
+                same.union(key_of(tracks[0].path), key_of(t.path), stage)
 
 
 # ------------------------------------------------------------------ fingerprints
@@ -233,7 +263,7 @@ def bit_error_rate(a: bytes, b: bytes) -> float:
     return best
 
 
-def _link_by_sound(tracks: list[Track], prints: dict[str, bytes], uf: _UF) -> None:
+def _link_by_sound(tracks: list[Track], prints: dict[str, bytes], uf: _UF, same: _UF) -> None:
     items = sorted((t for t in tracks if key_of(t.path) in prints), key=lambda t: t.length)
     for i, a in enumerate(items):
         ka = key_of(a.path)
@@ -241,7 +271,10 @@ def _link_by_sound(tracks: list[Track], prints: dict[str, bytes], uf: _UF) -> No
             if b.length - a.length > LENGTH_TOLERANCE:
                 break
             kb = key_of(b.path)
-            if uf.find(ka) == uf.find(kb):
-                continue
+            one_album = album_key(a) == album_key(b)
+            if uf.find(ka) == uf.find(kb) and (not one_album or same.find(ka) == same.find(kb)):
+                continue  # nothing new to learn from this pair
             if bit_error_rate(prints[ka], prints[kb]) < FP_THRESHOLD:
                 uf.union(ka, kb, 3)
+                if one_album:
+                    same.union(ka, kb, 3)
