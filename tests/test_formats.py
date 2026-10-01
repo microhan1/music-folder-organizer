@@ -110,7 +110,30 @@ def test_m4a_itunes_artist_id(tmp_path):
     m.add_tags()
     m["atID"] = [123456]
     m.save()
-    assert scan.read_track(p).tags.mb_artist_id == "itunes:123456"
+    t = scan.read_track(p)
+    assert (t.tags.itunes_artist_id, t.tags.mb_artist_id) == ("123456", "")
+
+
+def test_itunes_artist_id_as_music_tag_filler_writes_it(tmp_path):
+    """The three spellings music-tag-filler uses (tests/test_ids.py there)."""
+    from mutagen.mp4 import MP4, MP4FreeForm
+
+    p = put(tmp_path, "song-128.mp3", "a.mp3", title="T", artist="A")
+    tags = ID3(p)
+    tags.add(TXXX(encoding=3, desc="iTunes Artist Id", text="275749278"))
+    tags.save(p)
+    assert scan.read_track(p).tags.itunes_artist_id == "275749278"
+    p = put(tmp_path, "song.flac", "b.flac", title="T", artist="A")
+    audio = mutagen.File(p)
+    audio["ITUNES_ARTISTID"] = "275749278"
+    audio.save()
+    assert scan.read_track(p).tags.itunes_artist_id == "275749278"
+    p = put(tmp_path, "silent.m4a", "c.m4a")
+    m = MP4(p)
+    m.add_tags()
+    m["----:com.apple.iTunes:iTunes Artist Id"] = [MP4FreeForm(b"275749278")]
+    m.save()
+    assert scan.read_track(p).tags.itunes_artist_id == "275749278"
 
 
 def test_uppercase_extension_and_mixed_case(tmp_path):

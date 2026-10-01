@@ -181,15 +181,21 @@ class ArtistIndex:
             via.setdefault(a, set()).add(how)
             via.setdefault(b, set()).add(how)
 
-        # 1. artist ids
+        # 1. artist ids: any shared MusicBrainz or iTunes id joins two spellings. A file
+        # carrying both (music-tag-filler writes both for a merged candidate) links
+        # the MusicBrainz-only and the iTunes-only files of that artist.
         by_id: dict[str, str] = {}
         for tr in tracks:
-            name, mbid = tr.tags.artist, tr.tags.mb_artist_id
-            if not name or not mbid or normalize(name) in self.no_merge:
+            name = tr.tags.artist
+            if not name or normalize(name) in self.no_merge:
                 continue
-            if mbid in by_id and by_id[mbid] != name:
-                join(by_id[mbid], name, "id")
-            by_id.setdefault(mbid, name)
+            for key in (f"mb:{tr.tags.mb_artist_id}" if tr.tags.mb_artist_id else "",
+                        f"itunes:{tr.tags.itunes_artist_id}" if tr.tags.itunes_artist_id else ""):
+                if not key:
+                    continue
+                if key in by_id and by_id[key] != name:
+                    join(by_id[key], name, "id")
+                by_id.setdefault(key, name)
         # 2. spelling, plus a trailing bracket in another script as an alias
         by_norm: dict[str, str] = {}
         for name in self.counts:

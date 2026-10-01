@@ -44,6 +44,23 @@ def test_artist_id_joins():
     assert idx.rep("Okada") == idx.rep("岡田")
 
 
+def test_itunes_id_joins_and_bridges_to_musicbrainz():
+    tracks = [tr("a.mp3", artist="Yukiko Okada", itunes_artist_id="7"),
+              tr("b.mp3", artist="오카다 유키코", itunes_artist_id="7")]
+    idx = ArtistIndex(tracks)
+    assert idx.rep("Yukiko Okada") == idx.rep("오카다 유키코")
+    # MusicBrainz-only and iTunes-only files meet through a file that has both
+    bridge = [tr("a.mp3", artist="岡田有希子", mb_artist_id="mb1"),
+              tr("b.mp3", artist="Okada Yukiko", mb_artist_id="mb1", itunes_artist_id="7"),
+              tr("c.mp3", artist="오카다 유키코", itunes_artist_id="7")]
+    idx = ArtistIndex(bridge)
+    assert len({idx.rep(t.tags.artist) for t in bridge}) == 1
+    # the same number in the two id spaces is not the same artist
+    apart = [tr("a.mp3", artist="One", mb_artist_id="7"), tr("b.mp3", artist="Two", itunes_artist_id="7")]
+    idx = ArtistIndex(apart)
+    assert idx.rep("One") != idx.rep("Two")
+
+
 def test_no_merge_splits_auto_group():
     tracks = [tr("a.mp3", artist="Ab C"), tr("b.mp3", artist="AbC")]
     assert ArtistIndex(tracks).rep("Ab C") == ArtistIndex(tracks).rep("AbC")

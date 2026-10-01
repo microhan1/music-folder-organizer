@@ -34,6 +34,7 @@ class TagSet:
     genre: str = ""
     artist_sort: str = ""
     mb_artist_id: str = ""
+    itunes_artist_id: str = ""  # Apple's artist id: music-tag-filler's "iTunes Artist Id" or m4a atID
     compilation: bool = False
 
 
@@ -197,10 +198,13 @@ def _text(frame) -> str:
 def _read_id3(id3) -> TagSet:
     if not hasattr(id3, "getall"):
         return TagSet()
-    mbid = ""
+    mbid = itunes = ""
     for frame in id3.getall("TXXX"):
-        if str(getattr(frame, "desc", "")).lower() == "musicbrainz artist id" and frame.text:
+        desc = str(getattr(frame, "desc", "")).lower()
+        if desc == "musicbrainz artist id" and frame.text:
             mbid = str(frame.text[0])
+        elif desc == "itunes artist id" and frame.text:
+            itunes = str(frame.text[0])
     genre = ""
     tcon = id3.get("TCON")
     if tcon is not None:
@@ -219,6 +223,7 @@ def _read_id3(id3) -> TagSet:
         genre=genre.strip(),
         artist_sort=_text(id3.get("TSOP")),
         mb_artist_id=_first_id(mbid),
+        itunes_artist_id=_first_id(itunes),
         compilation=_text(id3.get("TCMP")) in ("1", "true"),
     )
 
@@ -246,6 +251,7 @@ def _read_vorbis(vc) -> TagSet:
         genre=_first(vc, "genre"),
         artist_sort=_first(vc, "artistsort"),
         mb_artist_id=_first_id(_first(vc, "musicbrainz_artistid")),
+        itunes_artist_id=_first_id(_first(vc, "itunes_artistid")),
         compilation=_first(vc, "compilation") in ("1", "true"),
     )
 
@@ -268,12 +274,14 @@ def _read_mp4(mp4) -> TagSet:
         return ""
 
     mbid = s("----:com.apple.iTunes:MusicBrainz Artist Id")
-    if not mbid and mp4.get("atID"):
-        mbid = f"itunes:{mp4['atID'][0]}"
+    itunes = s("----:com.apple.iTunes:iTunes Artist Id")  # how music-tag-filler writes it
+    if not itunes and mp4.get("atID"):  # the iTunes Store's own atom
+        itunes = str(mp4["atID"][0])
     return TagSet(
         title=s("\xa9nam"), artist=s("\xa9ART"), album=s("\xa9alb"), album_artist=s("aART"),
         year=s("\xa9day"), track=pair("trkn"), disc=pair("disk"), genre=s("\xa9gen"),
-        artist_sort=s("soar"), mb_artist_id=_first_id(mbid), compilation=bool(mp4.get("cpil") and mp4["cpil"]),
+        artist_sort=s("soar"), mb_artist_id=_first_id(mbid), itunes_artist_id=_first_id(itunes),
+        compilation=bool(mp4.get("cpil") and mp4["cpil"]),
     )
 
 

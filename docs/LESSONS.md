@@ -82,6 +82,12 @@
 - 최소 크기에서 표 높이 0, 안내문·요약 잘림, 버튼 잘림 → 최소 높이 800(화면보다 크지 않게), 안내문은 `<Configure>`로 줄바꿈 폭 조정, 버튼을 상태 영역보다 먼저 pack
 - 재발 방지: 규칙 — **GUI를 바꾸면 기본 크기와 최소 크기 둘 다, 4개 언어로 스크린샷**
 
+### A16. 짝 도구가 적는 iTunes 아티스트 ID를 읽지 않음
+- 증상: music-tag-filler는 iTunes 후보로 채운 곡에 `TXXX:iTunes Artist Id` / `ITUNES_ARTISTID` / `----:com.apple.iTunes:iTunes Artist Id`를 적는데, 이 도구는 m4a의 `atID`만 읽어 그 곡들은 ID로 묶이지 않음. README 상호 링크를 쓰다 두 코드를 대조해서 발견
+- 원인: 짝 도구의 실제 출력 형식을 확인하지 않고 "있을 법한" 칸만 읽음
+- 해결: 세 형식 모두 읽고(`itunes_artist_id`), MusicBrainz·iTunes 중 어느 ID든 같으면 같은 가수로 묶음(두 ID 공간은 `mb:`·`itunes:`로 분리)
+- 재발 방지: `test_ids_written_by_music_tag_filler_merge_artists` — **짝 도구의 실제 쓰기 함수로 쓴 파일을 읽는 통합 테스트**. 규칙: 다른 도구와의 연동을 문서에 적기 전에 그 도구의 코드와 테스트로 형식을 확인한다
+
 ## B. 실제 데이터에서 알게 된 것 (기본값을 바꾼 이유)
 
 - B1. 56곡이 트랙 태그 없이 `01.제목.mp3` → 파일명 앞 숫자를 트랙으로 사용

@@ -389,6 +389,45 @@ def test_music_tag_filler_backup_still_restores_after_moving(tmp_path):
     assert res.done == 1
 
 
+def _music_tag_filler_tags():
+    import importlib.util
+    import sys
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "music-tag-filler", "tags.py")
+    if not os.path.exists(path):
+        pytest.skip("music-tag-filler is not next to this repo")
+    spec = importlib.util.spec_from_file_location("mtf_tags", path)
+    mtf = importlib.util.module_from_spec(spec)
+    sys.modules["mtf_tags"] = mtf
+    spec.loader.exec_module(mtf)
+    if not hasattr(mtf, "Ids"):
+        pytest.skip("this music-tag-filler does not write identifiers yet")
+    return mtf
+
+
+def test_ids_written_by_music_tag_filler_merge_artists(tmp_path):
+    """Write with the other tool's real writer, read here: the formats must match."""
+    import scan as scan_mod
+
+    mtf = _music_tag_filler_tags()
+    a = put(tmp_path, "song-128.mp3", "x/a.mp3")
+    b = put(tmp_path, "song.flac", "y/b.flac")
+    c = put(tmp_path, "silent.m4a", "z/c.m4a")
+    mtf.write_file(a, mtf.Tags(title="A", artist="岡田有希子", album="Fairy", track="1"),
+                   ids=mtf.Ids(mb_artist_ids=["mb-okada"], itunes_artist_id="275749278"))
+    mtf.write_file(b, mtf.Tags(title="B", artist="Yukiko Okada", album="Fairy", track="2"),
+                   ids=mtf.Ids(itunes_artist_id="275749278"))
+    mtf.write_file(c, mtf.Tags(title="C", artist="오카다 유키코", album="Fairy", track="3"),
+                   ids=mtf.Ids(mb_artist_ids=["mb-okada"]))
+    tracks = {t.name: t for t in scan_mod.scan(str(tmp_path)).tracks}
+    assert tracks["a.mp3"].tags.itunes_artist_id == "275749278" and tracks["a.mp3"].tags.mb_artist_id == "mb-okada"
+    assert tracks["b.flac"].tags.itunes_artist_id == "275749278"
+    assert tracks["c.m4a"].tags.mb_artist_id == "mb-okada"
+    _, p = build(tmp_path)
+    folders = {os.path.relpath(i.dst, tmp_path).split(os.sep)[0] for i in p.items}
+    assert len(folders) == 1, folders  # three spellings, one folder, joined only by the ids
+
+
 def test_five_thousand_files_preview_is_fast(tmp_path):
     import time
 
