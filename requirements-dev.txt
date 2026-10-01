@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest>=8
+pyinstaller>=6
+Pillow>=10.0
+# only for regenerating samples/ and assets/
+soundfile>=0.13
+numpy>=1.26

@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.spec
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# App runtime files
+settings.json
+artists.json
+organize_log.json
+untagged.txt
+*.part
+
+# test music (user files)
+ex/
+
+# local-only notes for Claude
+CLAUDE.local.md

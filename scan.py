@@ -1,0 +1,305 @@
+"""Walk a folder and read the tags of every music file in it. Read only.
+
+The tag readers follow music-tag-filler's tags.py (same mutagen calls, same
+field names) but read a few more fields and two more formats, and never write.
+"""
+from __future__ import annotations
+
+import dataclasses
+import os
+import re
+import threading
+from typing import Callable
+
+import mutagen
+
+AUDIO_EXTS = (".mp3", ".flac", ".m4a", ".ogg", ".wav", ".wma")
+LOSSLESS_FORMATS = {"FLAC", "WAV"}
+LRC_EXT = ".lrc"
+TAGBAK_SUFFIX = ".tagbak.json"  # music-tag-filler's per-file backup
+COVER_NAMES = {f"{stem}{ext}" for stem in ("cover", "folder", "front") for ext in (".jpg", ".jpeg", ".png")}
+JUNK_NAMES = {"thumbs.db", ".ds_store", "desktop.ini", "ehthumbs.db"}
+LOG_NAME = "organize_log.json"
+
+
+@dataclasses.dataclass
+class TagSet:
+    title: str = ""
+    artist: str = ""
+    album: str = ""
+    album_artist: str = ""
+    year: str = ""
+    track: str = ""
+    disc: str = ""
+    genre: str = ""
+    artist_sort: str = ""
+    mb_artist_id: str = ""
+    compilation: bool = False
+
+
+@dataclasses.dataclass
+class Track:
+    path: str
+    fmt: str
+    size: int
+    length: float = 0.0  # seconds
+    bitrate: int = 0  # kbps
+    sample_rate: int = 0
+    lossless: bool = False
+    tags: TagSet = dataclasses.field(default_factory=TagSet)
+    error: str = ""  # unreadable file: tags stay empty
+
+    @property
+    def folder(self) -> str:
+        return os.path.dirname(self.path)
+
+    @property
+    def name(self) -> str:
+        return os.path.basename(self.path)
+
+    def is_untagged(self) -> bool:
+        return not self.tags.title or not (self.tags.artist or self.tags.album_artist)
+
+
+@dataclasses.dataclass
+class DirInfo:
+    path: str
+    files: list[str]  # names
+    subdirs: list[str]  # names
+
+
+@dataclasses.dataclass
+class ScanResult:
+    root: str
+    tracks: list[Track]
+    dirs: dict[str, DirInfo]  # key: key_of(path)
+    cancelled: bool = False
+
+
+def key_of(path: str) -> str:
+    """Identity of an existing path: case-insensitive like Windows. NTFS keeps NFC
+    and NFD spellings apart, so two such files stay two keys."""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def target_key(path: str) -> str:
+    """Key for new names: NFC too, so the tool never creates two names that only
+    differ in Unicode normalization (they look identical in Explorer)."""
+    import unicodedata
+
+    return os.path.normcase(unicodedata.normalize("NFC", os.path.abspath(path)))
+
+
+def format_of(path: str) -> str | None:
+    ext = os.path.splitext(path)[1].lower()
+    return {".mp3": "MP3", ".flac": "FLAC", ".m4a": "M4A", ".ogg": "OGG", ".wav": "WAV", ".wma": "WMA"}.get(ext)
+
+
+# ------------------------------------------------------------------ walking
+ProgressFn = Callable[[int, int], None]
+
+
+def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | None = None,
+         cancel: threading.Event | None = None) -> ScanResult:
+    """Every music file under root (sorted), with tags. ``exclude`` lists folders
+    whose subtree is skipped (the dupes folder, a destination inside root)."""
+    root = os.path.abspath(root)
+    skip = {key_of(p) for p in (exclude or [])}
+    dirs: dict[str, DirInfo] = {}
+    audio: list[str] = []
+    for here, subdirs, files in os.walk(root):
+        if cancel is not None and cancel.is_set():
+            return ScanResult(root, [], dirs, cancelled=True)
+        subdirs[:] = sorted(d for d in subdirs if key_of(os.path.join(here, d)) not in skip)
+        files.sort()
+        dirs[key_of(here)] = DirInfo(here, list(files), list(subdirs))
+        audio.extend(os.path.join(here, f) for f in files if format_of(f))
+    tracks: list[Track] = []
+    total = len(audio)
+    for i, path in enumerate(audio):
+        if cancel is not None and cancel.is_set():
+            return ScanResult(root, tracks, dirs, cancelled=True)
+        tracks.append(read_track(path))
+        if progress is not None and (i % 25 == 0 or i + 1 == total):
+            progress(i + 1, total)
+    return ScanResult(root, tracks, dirs)
+
+
+# ------------------------------------------------------------------ reading
+def read_track(path: str) -> Track:
+    fmt = format_of(path) or ""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    track = Track(os.path.abspath(path), fmt, size)
+    try:
+        audio = _open(path, fmt)
+    except Exception as exc:  # unreadable or locked: the file can still be listed
+        track.error = str(exc) or exc.__class__.__name__
+        return track
+    if audio is None:
+        track.error = "unsupported"
+        return track
+    info = audio.info
+    track.length = float(getattr(info, "length", 0.0) or 0.0)
+    track.bitrate = int(round((getattr(info, "bitrate", 0) or 0) / 1000))
+    track.sample_rate = int(getattr(info, "sample_rate", 0) or 0)
+    track.lossless = fmt in LOSSLESS_FORMATS or str(getattr(info, "codec", "")).lower() == "alac"
+    if track.bitrate == 0 and track.length > 0 and size:
+        track.bitrate = int(round(size * 8 / track.length / 1000))
+    try:
+        track.tags = _read_tags(fmt, audio)
+    except Exception as exc:
+        track.error = str(exc) or exc.__class__.__name__
+    return track
+
+
+def _open(path: str, fmt: str):
+    if fmt == "MP3":
+        from mutagen.mp3 import MP3
+        return MP3(path)
+    if fmt == "FLAC":
+        from mutagen.flac import FLAC
+        return FLAC(path)
+    if fmt == "M4A":
+        from mutagen.mp4 import MP4
+        return MP4(path)
+    if fmt == "WAV":
+        from mutagen.wave import WAVE
+        return WAVE(path)
+    if fmt == "WMA":
+        from mutagen.asf import ASF
+        return ASF(path)
+    return mutagen.File(path)  # .ogg may be Vorbis, Opus or FLAC-in-Ogg
+
+
+def _read_tags(fmt: str, audio) -> TagSet:
+    tags = audio.tags
+    if tags is None:
+        return TagSet()
+    if fmt in ("MP3", "WAV"):
+        return _read_id3(tags)
+    if fmt == "M4A":
+        return _read_mp4(tags)
+    if fmt == "WMA":
+        return _read_asf(tags)
+    return _read_vorbis(tags)
+
+
+def _text(frame) -> str:
+    try:
+        return str(frame.text[0]).strip() if frame is not None and frame.text else ""
+    except (AttributeError, IndexError):
+        return ""
+
+
+def _read_id3(id3) -> TagSet:
+    if not hasattr(id3, "getall"):
+        return TagSet()
+    mbid = ""
+    for frame in id3.getall("TXXX"):
+        if str(getattr(frame, "desc", "")).lower() == "musicbrainz artist id" and frame.text:
+            mbid = str(frame.text[0])
+    genre = ""
+    tcon = id3.get("TCON")
+    if tcon is not None:
+        try:
+            genre = str(tcon.genres[0]) if tcon.genres else ""
+        except Exception:
+            genre = _text(tcon)
+    return TagSet(
+        title=_text(id3.get("TIT2")),
+        artist=_text(id3.get("TPE1")),
+        album=_text(id3.get("TALB")),
+        album_artist=_text(id3.get("TPE2")),
+        year=_text(id3.get("TDRC")) or _text(id3.get("TYER")),
+        track=_text(id3.get("TRCK")),
+        disc=_text(id3.get("TPOS")),
+        genre=genre.strip(),
+        artist_sort=_text(id3.get("TSOP")),
+        mb_artist_id=_first_id(mbid),
+        compilation=_text(id3.get("TCMP")) in ("1", "true"),
+    )
+
+
+def _first(vc, *keys: str) -> str:
+    for key in keys:
+        try:
+            values = vc.get(key)
+        except (KeyError, TypeError, ValueError):
+            values = None
+        if values:
+            return str(values[0]).strip()
+    return ""
+
+
+def _read_vorbis(vc) -> TagSet:
+    return TagSet(
+        title=_first(vc, "title"),
+        artist=_first(vc, "artist"),
+        album=_first(vc, "album"),
+        album_artist=_first(vc, "albumartist", "album artist"),
+        year=_first(vc, "date", "year"),
+        track=_first(vc, "tracknumber"),
+        disc=_first(vc, "discnumber"),
+        genre=_first(vc, "genre"),
+        artist_sort=_first(vc, "artistsort"),
+        mb_artist_id=_first_id(_first(vc, "musicbrainz_artistid")),
+        compilation=_first(vc, "compilation") in ("1", "true"),
+    )
+
+
+def _read_mp4(mp4) -> TagSet:
+    def s(key: str) -> str:
+        v = mp4.get(key)
+        if not v:
+            return ""
+        item = v[0]
+        if isinstance(item, (bytes, bytearray)):
+            return bytes(item).decode("utf-8", "replace").strip()
+        return str(item).strip()
+
+    def pair(key: str) -> str:
+        v = mp4.get(key)
+        if v and isinstance(v[0], (tuple, list)) and v[0]:
+            n, total = (list(v[0]) + [0, 0])[:2]
+            return f"{n}/{total}" if total else str(n) if n else ""
+        return ""
+
+    mbid = s("----:com.apple.iTunes:MusicBrainz Artist Id")
+    if not mbid and mp4.get("atID"):
+        mbid = f"itunes:{mp4['atID'][0]}"
+    return TagSet(
+        title=s("\xa9nam"), artist=s("\xa9ART"), album=s("\xa9alb"), album_artist=s("aART"),
+        year=s("\xa9day"), track=pair("trkn"), disc=pair("disk"), genre=s("\xa9gen"),
+        artist_sort=s("soar"), mb_artist_id=_first_id(mbid), compilation=bool(mp4.get("cpil") and mp4["cpil"]),
+    )
+
+
+def _read_asf(asf) -> TagSet:
+    def s(key: str) -> str:
+        v = asf.get(key)
+        return str(v[0]).strip() if v else ""
+
+    return TagSet(
+        title=s("Title"), artist=s("Author"), album=s("WM/AlbumTitle"), album_artist=s("WM/AlbumArtist"),
+        year=s("WM/Year"), track=s("WM/TrackNumber"), disc=s("WM/PartOfSet"), genre=s("WM/Genre"),
+        artist_sort=s("WM/ArtistSortOrder"), mb_artist_id=_first_id(s("MusicBrainz/Artist Id")),
+        compilation=s("WM/IsCompilation").lower() in ("1", "true"),
+    )
+
+
+def _first_id(text: str) -> str:
+    """Multi-artist credits store several ids; the first one names the main artist."""
+    return re.split(r"[;/,\s]+", text.strip())[0].lower() if text and text.strip() else ""
+
+
+def parse_number(text: str) -> int:
+    m = re.match(r"\s*(\d+)", text or "")
+    return int(m.group(1)) if m else 0
+
+
+def parse_year(text: str) -> str:
+    m = re.search(r"(\d{4})", text or "")
+    return m.group(1) if m else ""
