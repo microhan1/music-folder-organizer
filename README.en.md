@@ -59,7 +59,7 @@ Pick a preset or type your own. The placeholder buttons under the box insert at 
 | `{artist_sort}` | artist sort name (Latin-letter folders for Japanese or Chinese artists) |
 | `{a\|b}` | b when a is empty |
 
-Empty values become fallback names such as "Unknown Artist" and "Unknown Album" (change them with `fallbacks` in `settings.json`). Characters Windows does not allow in names (`<>:"/\|?*`) become `_`; a path longer than 240 characters is shortened, title first.
+Empty values become fallback names such as "Unknown Artist" and "Unknown Album" (change them under **Settings** at the top right, together with the duplicates folder name, the artists.json, fpcalc and Music Tag Filler locations, and the artist-name rule). Characters Windows does not allow in names (`<>:"/\|?*`) become `_`; a path longer than 240 characters is shortened, title first.
 
 `.lrc` files, Music Tag Filler backups (`.tagbak.json`) and `cover.jpg` / `folder.jpg` move along with the music. Folders left empty are removed (including ones holding only `Thumbs.db` or `desktop.ini`).
 

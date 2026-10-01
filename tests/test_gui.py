@@ -550,3 +550,66 @@ def prefs_default():
     import prefs
 
     return prefs.DEFAULT_PATTERN
+
+
+# ------------------------------------------------------------------ v0.3.0 item 6: settings window
+def test_settings_save_changes_the_preview(app, lib, dialogs):
+    app.load_source(str(lib))
+    app.wait()
+    app._show_settings()
+    app.pump(0.1)
+    app.set_vars["fallback_artist"].set("Nobody Knows")
+    app._save_settings()
+    app.wait()
+    assert i18n.load_settings()["fallbacks"] == {"artist": "Nobody Knows"}
+    app.var_untagged.set(True)
+    app._options_changed()
+    app.pump(0.5)
+    item = next(i for i in app.plan.items if i.src.endswith("noise.wav"))
+    assert os.path.relpath(item.dst, lib).split(os.sep)[0] == "Nobody Knows"
+
+
+def test_settings_reject_bad_values(app, dialogs, tmp_path):
+    app._show_settings()
+    app.pump(0.1)
+    app.set_vars["dupes_folder"].set("bad/name")
+    app.set_vars["fpcalc_path"].set(str(tmp_path / "missing.exe"))
+    app._save_settings()
+    assert dialogs["shown"][-1][0] == "showerror"
+    assert "Duplicates folder name" in dialogs["shown"][-1][1] and "fpcalc" in dialogs["shown"][-1][1]
+    assert app.settings_win.winfo_exists()  # stays open to fix
+    assert "dupes_folder" not in i18n.load_settings() or i18n.load_settings()["dupes_folder"] == ""
+    app._reset_settings()
+    assert all(v.get() == "" for v in app.set_vars.values())
+    app.settings_win.destroy()
+
+
+def test_settings_rename_dupes_folder_updates_the_button(app, lib):
+    app._show_settings()
+    app.pump(0.1)
+    app.set_vars["dupes_folder"].set("Doubles")
+    app._save_settings()
+    app.pump(0.2)
+    assert app.prefs.dupes_name() == "Doubles"
+    texts = []
+
+    def walk(w):
+        for c in w.winfo_children():
+            try:
+                texts.append(str(c.cget("text")))
+            except Exception:
+                pass
+            walk(c)
+
+    walk(app.frame)
+    assert any("Doubles" in s for s in texts)
+
+
+def test_settings_closes_on_language_switch(app):
+    app._show_settings()
+    app.pump(0.1)
+    app.var_lang.set(i18n.LANG_NAMES["ja"])
+    app._on_lang()
+    assert not app.settings_win.winfo_exists()
+    app.var_lang.set(i18n.LANG_NAMES["en"])
+    app._on_lang()

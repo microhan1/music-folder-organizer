@@ -56,6 +56,10 @@ MAX_LIST = 30  # lines of a failure list shown in a dialog
 TAG_FILLER_EXE = "music-tag-filler.exe"
 TAG_FILLER_EXTS = {".mp3", ".flac", ".m4a", ".ogg"}  # what music-tag-filler reads and writes
 CMDLINE_LIMIT = 30000  # Windows allows 32 767 characters; keep a margin
+SETTING_LABELS = {"fallback_artist": "set_fallback_artist", "fallback_album": "set_fallback_album",
+                  "fallback_year": "set_fallback_year", "fallback_genre": "set_fallback_genre",
+                  "dupes_folder": "set_dupes_folder", "artists_path": "set_artists_path",
+                  "fpcalc_path": "set_fpcalc_path", "tag_filler_path": "set_tag_filler_path"}
 PATTERN_BUTTONS = ("{artist}", "{album_artist}", "{album}", "{title}", "{track:02}", "{disc}", "{year}",
                    "{genre}", "{artist_sort}")
 
@@ -160,6 +164,7 @@ class App:
         self._plan_job: str | None = None
         self._filler: subprocess.Popen | None = None  # music-tag-filler opened from here
         self.history: tk.Toplevel | None = None  # the undo history window, when open
+        self.settings_win: tk.Toplevel | None = None
         self.history_runs: list[undo_mod.RunInfo] = []
         self._rescanned_note = False
         self.var_pattern = tk.StringVar(value=self.prefs.pattern)
@@ -330,16 +335,18 @@ class App:
         tk.Frame(outer, bg=BORDER, height=1).pack(fill="x")
         inner = ttk.Frame(head, padding=(20, 14))
         inner.pack(fill="x")
-        if self._icon is not None:
-            ttk.Label(inner, image=self._icon).pack(side="left", padx=(0, 12))
-        names = ttk.Frame(inner)
-        names.pack(side="left")
-        ttk.Label(names, text=t("app_title"), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(names, text=t("app_tagline"), style="Small.TLabel").pack(anchor="w")
+        # fixed-size controls on the right first, so a narrow window cuts the tagline, not them (LESSONS A18)
         lang = ttk.Combobox(inner, textvariable=self.var_lang, values=list(i18n.LANG_NAMES.values()), state="readonly", width=10)
         lang.pack(side="right")
         lang.bind("<<ComboboxSelected>>", self._on_lang)
         ttk.Label(inner, text=t("lbl_language"), style="Muted.TLabel").pack(side="right", padx=8)
+        ttk.Button(inner, text=t("btn_settings"), command=self._show_settings).pack(side="right", padx=(0, 16))
+        if self._icon is not None:
+            ttk.Label(inner, image=self._icon).pack(side="left", padx=(0, 12))
+        names = ttk.Frame(inner)
+        names.pack(side="left", fill="x", expand=True)
+        ttk.Label(names, text=t("app_title"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(names, text=t("app_tagline"), style="Small.TLabel").pack(anchor="w")
 
         # the action bar is packed before the body so a short window squeezes the table, not the buttons
         bar = ttk.Frame(outer, padding=(20, 12))
@@ -588,8 +595,9 @@ class App:
         name = self.var_lang.get()
         code = next((c for c, n in i18n.LANG_NAMES.items() if n == name), i18n.DEFAULT_LANG)
         i18n.set_lang(code)
-        if self.history is not None and self.history.winfo_exists():
-            self.history.destroy()  # it would keep the old language
+        for win in (self.history, self.settings_win):
+            if win is not None and win.winfo_exists():
+                win.destroy()  # it would keep the old language
         self._style()  # the UI font follows the language
         self._build()
         if self.scan is not None:
@@ -1051,6 +1059,110 @@ class App:
                                             cancel=self.cancel, run_id=run.id, other_logs=logs), run.source)
 
         self._start(work, "msg_undoing")
+
+    # ------------------------------------------------------------------ settings window
+    def _show_settings(self) -> None:
+        if self.busy:
+            return
+        if self.settings_win is not None and self.settings_win.winfo_exists():
+            self.settings_win.lift()
+            return
+        win = tk.Toplevel(self.root)
+        win.title(t("dlg_settings_title"))
+        win.configure(bg=SURFACE)
+        win.transient(self.root)
+        win.resizable(True, False)
+        self.settings_win = win
+        p = self.prefs
+        self.set_vars = {
+            **{f"fallback_{k}": tk.StringVar(value=p.fallbacks.get(k, "")) for k in prefs_mod.FALLBACK_KEYS},
+            "dupes_folder": tk.StringVar(value=p.dupes_folder),
+            "artists_path": tk.StringVar(value=p.artists_path),
+            "fpcalc_path": tk.StringVar(value=p.fpcalc_path),
+            "tag_filler_path": tk.StringVar(value=p.tag_filler_path),
+        }
+        self.set_pref = tk.StringVar(value=p.artist_name_preference)
+        frame = ttk.Frame(win, padding=(20, 16))
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+        row = 0
+
+        def section(key: str) -> None:
+            nonlocal row
+            ttk.Label(frame, text=t(key), style="Field.TLabel").grid(row=row, column=0, columnspan=3, sticky="w",
+                                                                     pady=(10 if row else 0, 6))
+            row += 1
+
+        def entry(field: str, default: str, browse=None) -> None:
+            nonlocal row
+            ttk.Label(frame, text=t(SETTING_LABELS[field])).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=3)
+            ttk.Entry(frame, textvariable=self.set_vars[field], width=44).grid(row=row, column=1, sticky="we", pady=3)
+            if browse is not None:
+                ttk.Button(frame, text=t("btn_browse"), command=browse).grid(row=row, column=2, sticky="w", padx=(8, 0))
+            ttk.Label(frame, text=default, style="Small.TLabel").grid(row=row, column=3, sticky="w", padx=(10, 0))
+            row += 1
+
+        section("set_section_fallbacks")
+        for k in prefs_mod.FALLBACK_KEYS:
+            entry(f"fallback_{k}", t("set_default", value=t(f"fallback_{k}")))
+        section("set_section_files")
+        entry("dupes_folder", t("set_default", value=t("dupes_folder")))
+        entry("artists_path", t("set_default", value="artists.json"),
+              lambda: self._browse_setting("artists_path", save=True, kind="json"))
+        found = dedupe.find_fpcalc("")
+        entry("fpcalc_path", t("set_auto_found") if found else t("set_auto_missing"),
+              lambda: self._browse_setting("fpcalc_path", kind="exe"))
+        entry("tag_filler_path", t("set_auto"), lambda: self._browse_setting("tag_filler_path", kind="exe"))
+        section("set_section_artists")
+        prefs_row = ttk.Frame(frame)
+        prefs_row.grid(row=row, column=0, columnspan=4, sticky="w")
+        for value, key in (("original", "opt_pref_original"), ("latin", "opt_pref_latin")):
+            ttk.Radiobutton(prefs_row, text=t(key), value=value, variable=self.set_pref,
+                            style="Seg.Toolbutton").pack(side="left")
+        row += 1
+        bar = ttk.Frame(frame)
+        bar.grid(row=row, column=0, columnspan=4, sticky="we", pady=(18, 0))
+        ttk.Button(bar, text=t("btn_save"), style="Accent.TButton", command=self._save_settings).pack(side="right")
+        ttk.Button(bar, text=t("btn_cancel"), command=win.destroy).pack(side="right", padx=(0, 8))
+        ttk.Button(bar, text=t("btn_reset"), command=self._reset_settings).pack(side="left")
+
+    def _browse_setting(self, field: str, save: bool = False, kind: str = "exe") -> None:
+        types = [("JSON", "*.json")] if kind == "json" else [("exe", "*.exe")]
+        current = self.set_vars[field].get()
+        start = os.path.dirname(current) if current else i18n.app_dir()
+        ask = filedialog.asksaveasfilename if save else filedialog.askopenfilename
+        path = ask(parent=self.settings_win, initialdir=start, filetypes=types,
+                   **({"defaultextension": ".json", "initialfile": "artists.json"} if save else {}))
+        if path:
+            self.set_vars[field].set(os.path.abspath(path))
+
+    def _reset_settings(self) -> None:
+        for var in self.set_vars.values():
+            var.set("")
+        self.set_pref.set("original")
+
+    def _save_settings(self) -> None:
+        values = {k: v.get().strip() for k, v in self.set_vars.items()}
+        values["fallbacks"] = {k: values.pop(f"fallback_{k}") for k in prefs_mod.FALLBACK_KEYS}
+        problems = prefs_mod.check(values)
+        if problems:
+            messagebox.showerror(t("dlg_settings_title"),
+                                 "\n".join(t(key, field=t(SETTING_LABELS[f])) for f, key in problems),
+                                 parent=self.settings_win)
+            return
+        p = self.prefs
+        p.fallbacks = {k: v for k, v in values["fallbacks"].items() if v}
+        p.set_dupes_folder(values["dupes_folder"])
+        p.artists_path = values["artists_path"]
+        p.fpcalc_path = values["fpcalc_path"]
+        p.tag_filler_path = values["tag_filler_path"]
+        p.artist_name_preference = self.set_pref.get()
+        prefs_mod.save(p)
+        self.var_pref.set(p.artist_name_preference)
+        self.settings_win.destroy()
+        self._build()  # the dupes folder name shows on a button
+        if self.source and os.path.isdir(self.source):
+            self.load_source(self.source)  # a new dupes name changes what a scan skips
 
     # ------------------------------------------------------------------ undo history window
     def _show_history(self) -> None:

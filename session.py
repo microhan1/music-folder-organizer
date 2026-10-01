@@ -13,7 +13,9 @@ from scan import ScanResult, Track, key_of
 
 
 def dupes_folder_names(p: Prefs) -> set[str]:
-    return i18n.all_values("dupes_folder") | {p.dupes_name()}
+    """Every name a duplicates folder may have: each language's default, the current
+    one and any used before (a renamed folder must not be scanned as music)."""
+    return i18n.all_values("dupes_folder") | {p.dupes_name()} | set(p.dupes_folder_history)
 
 
 def excludes(root: str, dest: str, p: Prefs) -> list[str]:

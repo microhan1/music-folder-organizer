@@ -27,6 +27,7 @@ class Prefs:
     move_sidecars: bool = True  # album extras (.cue, .log, booklet, Artwork/) follow a whole album
     dupes_action: str = "move"  # "move" to the dupes folder, or "trash"
     dupes_folder: str = ""  # "" = the language file's name
+    dupes_folder_history: list = dataclasses.field(default_factory=list)  # earlier names: still skipped by scans
     fallbacks: dict = dataclasses.field(default_factory=dict)  # {"artist": "...", ...}
     artists_path: str = ""  # "" = artists.json next to the exe
     artist_name_preference: str = "original"  # or "latin"
@@ -48,6 +49,39 @@ class Prefs:
     def artists_file(self) -> str:
         return self.artists_path or os.path.join(i18n.app_dir(), "artists.json")
 
+    def set_dupes_folder(self, name: str) -> None:
+        """A renamed duplicates folder keeps the old name on the skip list, or the next
+        scan would treat the old folder's files as music to organize."""
+        name = name.strip()
+        old = self.dupes_folder.strip()
+        if old and old != name and old not in self.dupes_folder_history:
+            self.dupes_folder_history.append(old)
+        self.dupes_folder = name
+
+
+_BAD_NAME = set('<>:"/\\|?*')
+
+
+def check(values: dict) -> list[tuple[str, str]]:
+    """Problems in settings typed by hand, as (field, lang key). Empty text means
+    "use the default" and is always fine."""
+    out = []
+    name = values.get("dupes_folder", "").strip()
+    if name and (set(name) & _BAD_NAME or name.strip(". ") != name or name in (".", "..")):
+        out.append(("dupes_folder", "err_bad_folder_name"))
+    for key in FALLBACK_KEYS:
+        text = values.get("fallbacks", {}).get(key, "").strip()
+        if text and set(text) & _BAD_NAME:
+            out.append((f"fallback_{key}", "err_bad_folder_name"))
+    for key in ("fpcalc_path", "tag_filler_path"):
+        path = values.get(key, "").strip()
+        if path and not os.path.isfile(path):
+            out.append((key, "err_file_not_found"))
+    artists = values.get("artists_path", "").strip()
+    if artists and not os.path.isdir(os.path.dirname(os.path.abspath(artists))):
+        out.append(("artists_path", "err_folder_not_found"))
+    return out
+
 
 def load() -> Prefs:
     raw = i18n.load_settings()
@@ -65,6 +99,7 @@ def load() -> Prefs:
         move_sidecars=typed("move_sidecars", bool),
         dupes_action=typed("dupes_action", str),
         dupes_folder=typed("dupes_folder", str),
+        dupes_folder_history=[s for s in typed("dupes_folder_history", list) if isinstance(s, str) and s.strip()],
         fallbacks={k: v for k, v in typed("fallbacks", dict).items() if k in FALLBACK_KEYS and isinstance(v, str)},
         artists_path=typed("artists_path", str),
         artist_name_preference=typed("artist_name_preference", str),
