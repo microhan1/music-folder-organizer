@@ -25,7 +25,7 @@ python main.py
 
 1. 음악 폴더를 창에 끌어다 놓습니다.
 2. 미리보기 표에서 현재 경로 → 새 경로를 확인합니다. 옮기지 않을 파일은 체크를 풉니다.
-3. **실행**을 누릅니다. 마음에 안 들면 **되돌리기**로 원래 자리로 돌아갑니다.
+3. **실행**을 누릅니다. 마음에 안 들면 **되돌리기…**에서 실행 기록을 보고 골라 되돌립니다(가장 최근 것이 먼저 골라져 있음). 같은 파일을 더 최근에 옮긴 실행이 있으면 그것부터 되돌리라고 알려 줍니다.
 
 실행 전에는 아무것도 옮기지 않습니다. 표 위에 "이동 n개, 변경 없음 n개, 태그 부족 n개, 중복 n개, 빈 폴더 n개"가 늘 보입니다.
 
@@ -97,6 +97,8 @@ python main.py ./music --dest ./sorted --copy          # 다른 폴더로 복사
 python main.py ./music --dedupe --fingerprint          # 중복(소리 포함)을 _중복 폴더로
 python main.py ./music --pattern "{artist}/{title}"
 python main.py ./music --undo                          # 가장 최근 정리 되돌리기
+python main.py ./music --history                       # 되돌리기 기록 (실행 ID 포함)
+python main.py ./music --undo-run 1a2b3c4d5e6f         # 고른 실행 하나 되돌리기
 ```
 
 `python main.py --help`가 OS 언어로 옵션을 보여 줍니다. 시험: `pip install -r requirements-dev.txt` 후 `python samples/make_samples.py`, `python -m pytest tests`.

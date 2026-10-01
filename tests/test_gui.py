@@ -19,8 +19,8 @@ def dialogs(monkeypatch):
 
     log = {"shown": [], "answer": True, "ask": None, "save": None, "dir": None}
     for name in ("showinfo", "showwarning", "showerror"):
-        monkeypatch.setattr(messagebox, name, lambda title, msg, _n=name: log["shown"].append((_n, msg)))
-    monkeypatch.setattr(messagebox, "askokcancel", lambda title, msg: (log["shown"].append(("ask", msg)), log["answer"])[1])
+        monkeypatch.setattr(messagebox, name, lambda title, msg, _n=name, **kw: log["shown"].append((_n, msg)))
+    monkeypatch.setattr(messagebox, "askokcancel", lambda title, msg, **kw: (log["shown"].append(("ask", msg)), log["answer"])[1])
     monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: log["ask"])
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: log["save"])
     monkeypatch.setattr(filedialog, "askdirectory", lambda **k: log["dir"])
@@ -433,3 +433,79 @@ def test_tag_filler_launch_failure(app, lib, dialogs, tmp_path, monkeypatch):
     app.wait()
     app._open_tag_filler()
     assert dialogs["shown"][-1][0] == "showerror" and app._filler is None
+
+
+# ------------------------------------------------------------------ v0.3.0 item 4: undo history window
+def _two_runs(app, root):
+    """Run 1 puts in/x.mp3 at A/X.mp3; run 2 moves it on to A/B/01 - X.mp3 (so run 1 is blocked)."""
+    import mover
+    from conftest import build
+
+    put(root, "song-128.mp3", "in/x.mp3", title="X", artist="A", album="B", tracknumber="1")
+    before = snapshot(root)
+    mover.execute(build(root, pattern="{artist}/{title}")[1])
+    time.sleep(1.1)
+    mover.execute(build(root)[1])
+    return before
+
+
+def test_history_lists_runs_and_blocks_the_older_one(app, tmp_path, dialogs):
+    root = tmp_path / "h"
+    before = _two_runs(app, root)
+    app.load_source(str(root))
+    app.wait()
+    app._show_history()
+    app.pump(0.2)
+    assert len(app.htree.get_children()) == 2
+    assert app.htree.selection() == ("0",)  # the newest undoable run is preselected
+    assert "Can be undone" in app.htree.set("0", "state")
+    assert "moved 1" in app.lbl_history_detail.cget("text")
+    app.htree.selection_set("1")
+    app.pump(0.1)
+    assert "Undo that run first" in app.lbl_history_detail.cget("text")
+    assert str(app.btn_undo_selected.cget("state")) == "disabled"
+    # undo the newest from the window, then the older one becomes possible
+    app.htree.selection_set("0")
+    app.pump(0.1)
+    app._undo_selected()
+    app.wait()
+    app.wait()
+    assert "Undone (" in app.htree.set("0", "state")
+    app.htree.selection_set("1")
+    app.pump(0.1)
+    assert str(app.btn_undo_selected.cget("state")) == "normal"
+    app._undo_selected()
+    app.wait()
+    app.wait()
+    import os
+    os.remove(root / "organize_log.json")
+    assert snapshot(root) == before
+    app.history.destroy()
+
+
+def test_history_empty(app, tmp_path):
+    app._show_history()
+    app.pump(0.1)
+    assert app.htree.get_children() == () or all("Undone" in app.htree.set(i, "state") for i in app.htree.get_children())
+    app.history.destroy()
+
+
+def test_history_closes_on_language_switch(app, tmp_path):
+    app._show_history()
+    app.pump(0.1)
+    app.var_lang.set(i18n.LANG_NAMES["ko"])
+    app._on_lang()
+    assert not app.history.winfo_exists()
+    app.var_lang.set(i18n.LANG_NAMES["en"])
+    app._on_lang()
+
+
+def test_quick_undo_respects_blockers(app, tmp_path, dialogs):
+    root = tmp_path / "q"
+    _two_runs(app, root)
+    app.load_source(str(root))
+    app.wait()
+    app._undo()  # the newest: allowed
+    app.wait()
+    app.wait()
+    assert "Undo finished" in dialogs["shown"][-1][1]

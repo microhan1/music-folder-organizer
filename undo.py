@@ -1,8 +1,10 @@
-"""Reverse the latest run recorded in organize_log.json.
+"""Reverse a run recorded in organize_log.json.
 
-Each press undoes one run, newest first. A file whose original place is taken
-by something else is left where it is and listed; files sent to the recycle
-bin are listed too (restore them from the recycle bin).
+By default the newest run that is not undone yet; ``run_id`` picks another. An
+older run cannot be undone while a newer, not undone run moved the files it
+placed (undo that one first). A file whose original place is taken by
+something else is left where it is and listed; files sent to the recycle bin
+are listed too (restore them from the recycle bin).
 """
 from __future__ import annotations
 
@@ -24,6 +26,69 @@ class UndoResult:
     trashed: list[str] = dataclasses.field(default_factory=list)
     nothing: bool = False  # no log, or every run already undone
     cancelled: bool = False
+    blocked_by: list["RunInfo"] = dataclasses.field(default_factory=list)  # newer runs to undo first
+
+
+@dataclasses.dataclass
+class RunInfo:
+    """One run of a log, as the history list shows it."""
+    log: str
+    index: int  # position in that log's runs
+    id: str
+    time: str
+    mode: str
+    source: str
+    dest: str
+    ops: list
+    undone: bool
+    undone_time: str = ""
+    skipped: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+
+    def count(self, *kinds: str) -> int:
+        return sum(1 for op in self.ops if op.get("op") in kinds)
+
+    @property
+    def files(self) -> int:
+        return self.count("move", "copy", "trash")
+
+    @property
+    def can_undo(self) -> bool:
+        return not self.undone and bool(self.ops)
+
+    def order(self) -> tuple[str, str, int]:
+        return (self.time, key_of(self.log), self.index)
+
+
+def runs_in(logs: list[str | None]) -> list[RunInfo]:
+    """Every run in the given logs (duplicates and missing logs ignored), newest first."""
+    seen: set[str] = set()
+    out: list[RunInfo] = []
+    for log in logs:
+        if not log or not os.path.isfile(log) or key_of(log) in seen:
+            continue
+        seen.add(key_of(log))
+        for i, run in enumerate(mover.load_log(log).get("runs", [])):
+            if not run.get("ops") and not run.get("undone"):
+                continue
+            skipped = [(s.get("path", ""), s.get("reason", "")) for s in run.get("undo_skipped", []) if isinstance(s, dict)]
+            out.append(RunInfo(log, i, str(run.get("id", "")), str(run.get("time", "")), str(run.get("mode", "move")),
+                               str(run.get("source", "")), str(run.get("dest", "")), list(run.get("ops", [])),
+                               bool(run.get("undone")), str(run.get("undone_time", "")), skipped))
+    out.sort(key=lambda r: r.order(), reverse=True)
+    return out
+
+
+def blockers(target: RunInfo, runs: list[RunInfo]) -> list[RunInfo]:
+    """Newer runs, not undone, that moved or trashed a file this run placed. (A newer
+    copy leaves the file where it was, so it does not get in the way.)"""
+    placed = {key_of(op["dst"]) for op in target.ops if op.get("op") in ("move", "copy") and op.get("dst")}
+    out = []
+    for r in runs:
+        if r is target or not r.can_undo or r.order() <= target.order():
+            continue
+        if any(key_of(op.get("src", "")) in placed for op in r.ops if op.get("op") in ("move", "trash")):
+            out.append(r)
+    return out
 
 
 def find_log(folder: str) -> str | None:
@@ -40,6 +105,20 @@ def find_log(folder: str) -> str | None:
     return None
 
 
+def candidate_logs(*folders: str | None) -> list[str]:
+    """Logs that may hold runs for these folders: each folder's own log, and the
+    last log from settings when one of its runs started from or went to them."""
+    out = [os.path.join(f, LOG_NAME) for f in folders if f]
+    out = [p for p in out if os.path.isfile(p)]
+    last = i18n.load_settings().get("last_log")
+    if isinstance(last, str) and os.path.isfile(last):
+        keys = {key_of(f) for f in folders if f}
+        if any(key_of(r.get("source", "")) in keys or key_of(r.get("dest", "")) in keys
+               for r in mover.load_log(last).get("runs", [])):
+            out.append(last)
+    return list(dict.fromkeys(out))
+
+
 def pending_run(log_path: str | None) -> dict | None:
     if not log_path:
         return None
@@ -51,16 +130,29 @@ def pending_run(log_path: str | None) -> dict | None:
 
 
 def undo(log_path: str | None, progress: Callable[[int, int], None] | None = None,
-         cancel: threading.Event | None = None) -> UndoResult:
+         cancel: threading.Event | None = None, run_id: str | None = None,
+         other_logs: list[str | None] | None = None) -> UndoResult:
+    """Undo ``run_id`` (default: the newest run not undone). ``other_logs`` are
+    searched too for newer runs that would block it."""
     res = UndoResult()
     if not log_path or not os.path.isfile(log_path):
         res.nothing = True
         return res
     data = mover.load_log(log_path)
-    run = next((r for r in reversed(data["runs"]) if not r.get("undone") and r.get("ops")), None)
+    pending = [r for r in data["runs"] if not r.get("undone") and r.get("ops")]
+    if run_id:
+        run = next((r for r in pending if str(r.get("id")) == run_id), None)
+    else:
+        run = pending[-1] if pending else None
     if run is None:
         res.nothing = True
         return res
+    known = runs_in([log_path, *(other_logs or [])])
+    me = next((r for r in known if key_of(r.log) == key_of(log_path) and r.id == str(run.get("id"))), None)
+    if me is not None:
+        res.blocked_by = blockers(me, known)
+        if res.blocked_by:
+            return res
     ops = list(reversed(run["ops"]))
     for n, op in enumerate(ops, 1):
         if cancel is not None and cancel.is_set():

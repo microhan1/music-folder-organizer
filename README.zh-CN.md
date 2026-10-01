@@ -25,7 +25,7 @@ python main.py
 
 1. 把音乐文件夹拖到窗口里。
 2. 在预览表中确认 当前路径 → 新路径。不想移动的文件取消勾选。
-3. 点击 **执行**。不满意可以 **撤销**，全部回到原处。
+3. 点击 **执行**。不满意可以在 **撤销…** 中查看执行记录并选择撤销(默认选中最近一次)。如果更近的执行又移动过同样的文件，会提示先撤销那一次。
 
 点击执行之前不会移动任何文件。表格上方始终显示“移动 n 个，无变化 n 个，标签不全 n 个，重复 n 个，空文件夹 n 个”。
 
@@ -97,6 +97,8 @@ python main.py ./music --dest ./sorted --copy          # 复制到其他文件�
 python main.py ./music --dedupe --fingerprint          # 把重复(包括按声音)移到 _重复 文件夹
 python main.py ./music --pattern "{artist}/{title}"
 python main.py ./music --undo                          # 撤销最近一次整理
+python main.py ./music --history                       # 撤销记录 (含执行 ID)
+python main.py ./music --undo-run 1a2b3c4d5e6f         # 撤销选定的一次执行
 ```
 
 `python main.py --help` 会用系统语言显示选项。测试: `pip install -r requirements-dev.txt` 后运行 `python samples/make_samples.py` 和 `python -m pytest tests`。

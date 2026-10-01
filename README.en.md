@@ -25,7 +25,7 @@ python main.py
 
 1. Drop a music folder on the window.
 2. Check current path → new path in the preview. Untick files that should stay where they are.
-3. Press **Run**. Not happy? **Undo** puts everything back.
+3. Press **Run**. Not happy? **Undo…** lists the runs so you can pick one to put back (the newest is preselected). If a newer run moved the same files again, it tells you to undo that one first.
 
 Nothing moves before you press Run. The line above the table always shows "Move n, unchanged n, missing tags n, duplicates n, empty folders n".
 
@@ -97,6 +97,8 @@ python main.py ./music --dest ./sorted --copy          # copy into another folde
 python main.py ./music --dedupe --fingerprint          # duplicates (by sound too) to _Duplicates
 python main.py ./music --pattern "{artist}/{title}"
 python main.py ./music --undo                          # undo the latest run
+python main.py ./music --history                       # undo history, with run IDs
+python main.py ./music --undo-run 1a2b3c4d5e6f         # undo one chosen run
 ```
 
 `python main.py --help` lists the options in your OS language. Tests: `pip install -r requirements-dev.txt`, then `python samples/make_samples.py` and `python -m pytest tests`.

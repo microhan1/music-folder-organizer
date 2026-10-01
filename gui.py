@@ -94,6 +94,21 @@ def _fmt_length(seconds: float) -> str:
     return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
 
 
+def _when(stamp: str, today_short: bool = False) -> str:
+    """"2026-10-01T18:24:26" -> "10-01 18:24:26" this year (or "18:24" today when
+    ``today_short``), the full date otherwise."""
+    import datetime
+
+    try:
+        t0 = datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return stamp.replace("T", " ")
+    now = datetime.datetime.now()
+    if today_short and t0.date() == now.date():
+        return t0.strftime("%H:%M")
+    return t0.strftime("%m-%d %H:%M:%S" if t0.year == now.year else "%Y-%m-%d %H:%M")
+
+
 def _short(path: str, limit: int = 96) -> str:
     """Middle ellipsis: keeps the drive and the last folders, which are what people recognise."""
     if len(path) <= limit:
@@ -142,6 +157,8 @@ class App:
         self.alias_error = ""
         self._plan_job: str | None = None
         self._filler: subprocess.Popen | None = None  # music-tag-filler opened from here
+        self.history: tk.Toplevel | None = None  # the undo history window, when open
+        self.history_runs: list[undo_mod.RunInfo] = []
         self._rescanned_note = False
         self.var_pattern = tk.StringVar(value=self.prefs.pattern)
         self.var_where = tk.StringVar(value="inplace")
@@ -391,7 +408,7 @@ class App:
         self.btn_run.pack(side="right")
         self.btn_cancel = ttk.Button(bar, text=t("btn_cancel"), command=self.cancel.set, state="disabled")
         self.btn_cancel.pack(side="right", padx=(0, 8))
-        self.btn_undo = ttk.Button(bar, text=t("btn_undo"), command=self._undo)
+        self.btn_undo = ttk.Button(bar, text=t("btn_undo_history"), command=self._show_history)
         self.btn_undo.pack(side="right", padx=(0, 8))
         self.btn_export = ttk.Button(bar, text=t("btn_export_untagged"), command=self._export_untagged)
         self.btn_export.pack(side="right", padx=(0, 8))
@@ -553,6 +570,8 @@ class App:
         name = self.var_lang.get()
         code = next((c for c, n in i18n.LANG_NAMES.items() if n == name), i18n.DEFAULT_LANG)
         i18n.set_lang(code)
+        if self.history is not None and self.history.winfo_exists():
+            self.history.destroy()  # it would keep the old language
         self._style()  # the UI font follows the language
         self._build()
         if self.scan is not None:
@@ -939,28 +958,138 @@ class App:
 
         self._start(work, "msg_moving")
 
+    def _known_logs(self) -> list[str]:
+        """Logs whose runs the history shows: this session's, the source's and the
+        destination's, and the last one from settings."""
+        logs = [self.last_log] if self.last_log else []
+        logs += undo_mod.candidate_logs(self.dest() if self.source else None, self.source or None)
+        last = i18n.load_settings().get("last_log")
+        if isinstance(last, str) and last:
+            logs.append(last)
+        return [p for p in dict.fromkeys(logs) if p and os.path.isfile(p)]
+
     def _undo(self) -> None:
+        """Undo the newest run that can be undone, after a confirmation."""
         if self.busy:
             return
-        log = self.last_log if self.last_log and undo_mod.pending_run(self.last_log) else None
-        if log is None and self.source:
-            log = undo_mod.find_log(self.dest()) or undo_mod.find_log(self.source)
-        if log is None:
-            last = self.prefs.last_log or i18n.load_settings().get("last_log", "")
-            log = last if isinstance(last, str) and undo_mod.pending_run(last) else None
-        run = undo_mod.pending_run(log)
+        run = next((r for r in undo_mod.runs_in(self._known_logs()) if r.can_undo), None)
         if run is None:
             messagebox.showinfo(t("btn_undo"), t("msg_no_log"))
             return
-        moves = sum(1 for op in run["ops"] if op.get("op") in ("move", "copy"))
-        if not messagebox.askokcancel(t("btn_undo"), t("confirm_undo", time=run.get("time", ""), count=moves, path=run.get("dest", ""))):
+        if not messagebox.askokcancel(t("btn_undo"), t("confirm_undo", time=run.time.replace("T", " "),
+                                                         count=run.count("move", "copy"), path=run.dest)):
             return
+        self._undo_run(run)
+
+    def _undo_run(self, run: undo_mod.RunInfo) -> None:
+        logs = self._known_logs()
 
         def work():
-            return ("undone", undo_mod.undo(log, progress=lambda d, n: self.queue.put(("progress", d, n, "msg_undoing")),
-                                            cancel=self.cancel), run.get("source", ""))
+            return ("undone", undo_mod.undo(run.log, progress=lambda d, n: self.queue.put(("progress", d, n, "msg_undoing")),
+                                            cancel=self.cancel, run_id=run.id, other_logs=logs), run.source)
 
         self._start(work, "msg_undoing")
+
+    # ------------------------------------------------------------------ undo history window
+    def _show_history(self) -> None:
+        if self.busy:
+            return
+        if self.history is not None and self.history.winfo_exists():
+            self.history.lift()
+            self._fill_history()
+            return
+        win = tk.Toplevel(self.root)
+        win.title(t("dlg_history_title"))
+        win.configure(bg=SURFACE)
+        win.geometry("980x560")
+        win.minsize(760, 420)
+        win.transient(self.root)
+        self.history = win
+        frame = ttk.Frame(win, padding=16)
+        frame.pack(fill="both", expand=True)
+        hint = ttk.Label(frame, text=t("history_hint"), style="Small.TLabel", justify="left")
+        hint.pack(anchor="w", fill="x", pady=(0, 8))
+        self._wrap(hint)
+        bar = ttk.Frame(frame)
+        bar.pack(side="bottom", fill="x", pady=(12, 0))
+        ttk.Button(bar, text=t("btn_close"), command=win.destroy).pack(side="right")
+        self.btn_undo_selected = ttk.Button(bar, text=t("btn_undo_selected"), style="Accent.TButton",
+                                            command=self._undo_selected)
+        self.btn_undo_selected.pack(side="right", padx=(0, 8))
+        self.lbl_history_detail = ttk.Label(frame, text="", style="Muted.TLabel", justify="left")
+        self.lbl_history_detail.pack(side="bottom", fill="x", pady=(10, 0))
+        self._wrap(self.lbl_history_detail)
+        box = self._card(frame, fill="both", expand=True)
+        cols = ("time", "mode", "count", "where", "state")
+        tree = ttk.Treeview(box, columns=cols, show="headings", selectmode="browse")
+        for c, key, width, stretch in (("time", "col_time", 150, False), ("mode", "col_mode", 70, False),
+                                      ("count", "col_files", 72, False), ("where", "col_where", 300, True),
+                                      ("state", "col_state", 320, False)):
+            tree.heading(c, text=t(key), anchor="w")
+            tree.column(c, width=width, stretch=stretch)
+        self._tags(tree)
+        tree.tag_configure("done", foreground="#9aa1ab")
+        self._attach_scroll(box, tree)
+        tree.bind("<<TreeviewSelect>>", lambda e: self._history_selected())
+        self.htree = tree
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        self._fill_history()
+
+    def _fill_history(self) -> None:
+        if self.history is None or not self.history.winfo_exists():
+            return
+        self.history_runs = undo_mod.runs_in(self._known_logs())
+        tree = self.htree
+        tree.delete(*tree.get_children())
+        for n, r in enumerate(self.history_runs):
+            state = t("state_undoable") if r.can_undo else t("state_undone", time=_when(r.undone_time, today_short=True))
+            if r.skipped:
+                state += " " + t("state_skipped", count=len(r.skipped))
+            tags = (["odd"] if n % 2 else []) + ([] if r.can_undo else ["done"])
+            mode = t("opt_copy") if r.mode == "copy" else t("opt_move")
+            tree.insert("", "end", iid=str(n), tags=tags,
+                        values=(_when(r.time), mode, r.files, _short(r.dest, 48), state))
+        if not self.history_runs:
+            self.lbl_history_detail.configure(text=t("msg_no_log"))
+            self.btn_undo_selected.configure(state="disabled")
+            return
+        first = next((str(i) for i, r in enumerate(self.history_runs) if r.can_undo), "0")
+        tree.selection_set(first)
+        tree.see(first)
+        self._history_selected()
+
+    def _history_run(self) -> undo_mod.RunInfo | None:
+        sel = self.htree.selection()
+        return self.history_runs[int(sel[0])] if sel else None
+
+    def _history_selected(self) -> None:
+        r = self._history_run()
+        if r is None:
+            return
+        if scan_mod.key_of(r.source) == scan_mod.key_of(r.dest):
+            where = t("history_inplace", path=_short(r.dest, 110))
+        else:
+            where = t("history_paths", source=_short(r.source, 60), dest=_short(r.dest, 60))
+        lines = [where, t("history_counts", move=r.count("move"), copy=r.count("copy"), trash=r.count("trash"),
+                          folders=r.count("rmdir"))]
+        if r.skipped:
+            lines.append(t("history_skipped_head", count=len(r.skipped)))
+            lines += [f"  • {_rel(p, r.source)} — {why}" for p, why in r.skipped[:8]]
+        blocked = undo_mod.blockers(r, self.history_runs) if r.can_undo else []
+        if blocked:
+            lines.append(t("msg_undo_blocked", time=_when(blocked[0].time), id=blocked[0].id))
+        self.lbl_history_detail.configure(text="\n".join(lines))
+        self.btn_undo_selected.configure(state="normal" if r.can_undo and not blocked and not self.busy else "disabled")
+
+    def _undo_selected(self) -> None:
+        r = self._history_run()
+        if r is None or not r.can_undo or self.busy:
+            return
+        if not messagebox.askokcancel(t("btn_undo"), t("confirm_undo", time=r.time.replace("T", " "),
+                                                         count=r.count("move", "copy"), path=r.dest),
+                                      parent=self.history):
+            return
+        self._undo_run(r)
 
     # ------------------------------------------------------------------ hand-off to music-tag-filler
     def _find_tag_filler(self) -> str | None:
@@ -1124,7 +1253,10 @@ class App:
         self.load_source(self.source)
 
     def _after_undo(self, res: undo_mod.UndoResult, source: str) -> None:
-        if res.nothing:
+        if res.blocked_by:
+            first = res.blocked_by[0]
+            messagebox.showwarning(t("btn_undo"), t("msg_undo_blocked", time=first.time.replace("T", " "), id=first.id))
+        elif res.nothing:
             messagebox.showinfo(t("btn_undo"), t("msg_no_log"))
         else:
             lines = [t("msg_undo_done", count=res.restored)]
@@ -1136,6 +1268,7 @@ class App:
             (messagebox.showwarning if res.skipped or res.trashed else messagebox.showinfo)(t("btn_undo"), "\n".join(lines))
             self.lbl_status.configure(text=lines[0])
         self.cancel.clear()
+        self._fill_history()
         folder = self.source or source
         if folder and os.path.isdir(folder):
             self.load_source(folder)

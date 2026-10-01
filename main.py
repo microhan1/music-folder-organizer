@@ -60,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--artists", help=t("cli_artists"))
     p.add_argument("--dry-run", action="store_true", help=t("cli_dry_run"))
     p.add_argument("--undo", action="store_true", help=t("cli_undo"))
+    p.add_argument("--history", action="store_true", help=t("cli_history"))
+    p.add_argument("--undo-run", metavar="ID", help=t("cli_undo_run"))
     p.add_argument("--lang", choices=i18n.LANGS, help=t("cli_lang"))
     p.add_argument("--gui", action="store_true", help=t("cli_gui"))
     return p
@@ -81,9 +83,42 @@ def status_label(item: plan_mod.Item) -> str:
     return label
 
 
-def run_undo(folder: str) -> int:
-    log = undo_mod.find_log(os.path.abspath(folder))
-    res = undo_mod.undo(log)
+def run_state(r: undo_mod.RunInfo) -> str:
+    if not r.undone:
+        return t("state_undoable")
+    text = t("state_undone", time=r.undone_time.replace("T", " "))
+    if r.skipped:
+        text += " " + t("state_skipped", count=len(r.skipped))
+    return text
+
+
+def run_history(folder: str) -> int:
+    runs = undo_mod.runs_in(undo_mod.candidate_logs(os.path.abspath(folder)))
+    if not runs:
+        print(t("msg_no_log"))
+        return 1
+    for r in runs:
+        mode = t("opt_copy") if r.mode == "copy" else t("opt_move")
+        print(t("cli_history_line", id=r.id, time=r.time.replace("T", " "), mode=mode, count=r.files,
+                state=run_state(r), dest=r.dest))
+    return 0
+
+
+def run_undo(folder: str, run_id: str | None = None) -> int:
+    folder = os.path.abspath(folder)
+    logs = undo_mod.candidate_logs(folder)
+    if run_id:
+        match = next((r for r in undo_mod.runs_in(logs) if r.id == run_id), None)
+        if match is None:
+            print(t("err_no_such_run", id=run_id), file=sys.stderr)
+            return 2
+        res = undo_mod.undo(match.log, run_id=run_id, other_logs=logs)
+    else:
+        res = undo_mod.undo(undo_mod.find_log(folder), other_logs=logs)
+    if res.blocked_by:
+        first = res.blocked_by[0]  # newest first: undo that one, then come back
+        print(t("msg_undo_blocked", time=first.time.replace("T", " "), id=first.id), file=sys.stderr)
+        return 1
     if res.nothing:
         print(t("msg_no_log"))
         return 1
@@ -100,8 +135,10 @@ def run_cli(args: argparse.Namespace) -> int:
     if not os.path.isdir(root):
         print(t("err_not_folder", path=args.folder), file=sys.stderr)
         return 2
-    if args.undo:
-        return run_undo(root)
+    if args.history:
+        return run_history(root)
+    if args.undo or args.undo_run:
+        return run_undo(root, args.undo_run)
     p = prefs_mod.load()
     if args.pattern:
         p.pattern = args.pattern

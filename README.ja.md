@@ -25,7 +25,7 @@ python main.py
 
 1. 音楽フォルダをウィンドウにドロップします。
 2. プレビュー表で 現在のパス → 新しいパス を確認します。動かしたくないファイルはチェックを外します。
-3. **実行** を押します。気に入らなければ **元に戻す** で元の場所に戻ります。
+3. **実行** を押します。気に入らなければ **元に戻す…** で実行履歴を見て選んで元に戻せます(最新のものが選択済み)。同じファイルをもっと後で移動した実行があれば、先にそちらを戻すよう案内します。
 
 実行するまでファイルは一切動きません。表の上に「移動 n 件、変更なし n 件、タグ不足 n 件、重複 n 件、空フォルダ n 件」が常に表示されます。
 
@@ -97,6 +97,8 @@ python main.py ./music --dest ./sorted --copy          # 別のフォルダへ�
 python main.py ./music --dedupe --fingerprint          # 重複(音による検出も)を _重複 フォルダへ
 python main.py ./music --pattern "{artist}/{title}"
 python main.py ./music --undo                          # 直近の整理を元に戻す
+python main.py ./music --history                       # 元に戻す履歴 (実行 ID 付き)
+python main.py ./music --undo-run 1a2b3c4d5e6f         # 選んだ実行を元に戻す
 ```
 
 `python main.py --help` で OS の言語のオプション一覧が出ます。テスト: `pip install -r requirements-dev.txt` の後、`python samples/make_samples.py` と `python -m pytest tests`。
