@@ -35,6 +35,8 @@
   "cli_history": "元に戻す履歴を表示 (実行 ID 付き)",
   "cli_undo_run": "選んだ実行を元に戻す (--history の ID)",
   "cli_history_line": "{id}  {time}  {mode}  {count} 件  {state}  → {dest}",
+  "lbl_example": "例:",
+  "pattern_buttons_hint": "{a|b} = a が空なら b",
   "lbl_options": "オプション",
   "opt_sidecars": "アルバムの付属ファイルも一緒に",
   "summary_sidecars": "付属ファイル {count} 件も一緒に",

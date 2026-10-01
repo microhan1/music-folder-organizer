@@ -509,3 +509,44 @@ def test_quick_undo_respects_blockers(app, tmp_path, dialogs):
     app.wait()
     app.wait()
     assert "Undo finished" in dialogs["shown"][-1][1]
+
+
+# ------------------------------------------------------------------ v0.3.0 item 5: pattern helper
+def test_placeholder_button_inserts_at_cursor(app):
+    app.var_pattern.set("{artist}/ - {title}")
+    app.pattern_box.icursor(9)  # right after "{artist}/"
+    app._insert_placeholder("{album}")
+    assert app.var_pattern.get() == "{artist}/{album} - {title}"
+    app.pattern_box.selection_range(9, 16)  # "{album}" selected: replaced
+    app._insert_placeholder("{year}")
+    assert app.var_pattern.get() == "{artist}/{year} - {title}"
+
+
+def test_example_without_a_folder_uses_a_sample(app):
+    app.var_pattern.set("{artist}/{album}/{track:02} - {title}")
+    app.pump(0.5)
+    assert "Artist/Album/03 - Title.mp3" in app.lbl_example.cget("text")
+    app.var_pattern.set("{oops}")
+    app.pump(0.5)
+    assert "—" in app.lbl_example.cget("text")
+
+
+def test_example_follows_the_selected_row(app, lib):
+    app.var_pattern.set(prefs_default())
+    app.load_source(str(lib))
+    app.wait()
+    first = app.lbl_example.cget("text")
+    rows = app.tree.get_children()
+    app.tree.selection_set(rows[-1])
+    app.pump(0.2)
+    item = next(i for i in app.plan.items if i.key == rows[-1])
+    assert os.path.basename(item.src) in app.lbl_example.cget("text") and app.lbl_example.cget("text") != first
+    app.var_pattern.set("{title}")
+    app.pump(0.6)
+    assert app.lbl_example.cget("text").split("→")[1].strip().startswith(os.path.splitext(os.path.basename(item.dst))[0])
+
+
+def prefs_default():
+    import prefs
+
+    return prefs.DEFAULT_PATTERN

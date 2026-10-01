@@ -39,9 +39,10 @@ Nothing moves before you press Run. The line above the table always shows "Move 
 
 ## Folder pattern
 
-Pick one of three presets or type your own.
+Pick a preset or type your own. The placeholder buttons under the box insert at the cursor, and the line below shows what happens to the file selected in the table (a sample song before a folder is open).
 
 - `{album_artist|artist}/{album}/{track:02} - {title}` (default)
+- `{album_artist|artist}/{album}/{disc}-{track:02} - {title}` (`2-05 - Title` on multi-disc albums only)
 - `{artist}/{title}`
 - `{year}/{artist} - {title}`
 
@@ -52,7 +53,7 @@ Pick one of three presets or type your own.
 | `{album}` | album |
 | `{title}` | title (the original file name when empty) |
 | `{track}`, `{track:02}` | track number (`:02` = two digits); the file name's leading number when the tag is empty |
-| `{disc}` | disc number |
+| `{disc}` | disc number; only on albums with two or more discs, otherwise it disappears with the separator next to it |
 | `{year}` | year (four digits) |
 | `{genre}` | genre |
 | `{artist_sort}` | artist sort name (Latin-letter folders for Japanese or Chinese artists) |

@@ -35,6 +35,8 @@
   "cli_history": "show the undo history (with run IDs)",
   "cli_undo_run": "undo one chosen run (an ID from --history)",
   "cli_history_line": "{id}  {time}  {mode}  {count} files  {state}  → {dest}",
+  "lbl_example": "Example:",
+  "pattern_buttons_hint": "{a|b} = b if a is empty",
   "lbl_options": "Options",
   "opt_sidecars": "Bring album extras along",
   "summary_sidecars": "{count} album extras along",

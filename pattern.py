@@ -50,8 +50,10 @@ def placeholders_in(pattern: str) -> set[str]:
     return {n.strip() for m in _TOKEN.finditer(pattern) for n in m.group(1).split("|")}
 
 
-def _value(name: str, track: Track, artist_map: Callable[[str], str]) -> str | int:
+def _value(name: str, track: Track, artist_map: Callable[[str], str], multi_disc: bool = True) -> str | int:
     tags = track.tags
+    if name == "disc" and not multi_disc:
+        return 0  # a one-disc album: "{disc}" and the separator next to it disappear
     if name == "artist":
         return artist_map(tags.artist) if tags.artist else ""
     if name == "album_artist":
@@ -78,8 +80,9 @@ def _format(value: str | int, spec: str) -> str:
 
 
 def render(pattern: str, track: Track, fallbacks: dict[str, str],
-           artist_map: Callable[[str], str] = lambda s: s) -> list[str]:
-    """Sanitized path segments; the last one is the file name without extension."""
+           artist_map: Callable[[str], str] = lambda s: s, multi_disc: bool = True) -> list[str]:
+    """Sanitized path segments; the last one is the file name without extension.
+    ``multi_disc`` False (the album has one disc) leaves "{disc}" empty."""
     stem = os.path.splitext(track.name)[0]
     out: list[str] = []
     raws = re.split(r"[/\\]", pattern.strip().strip("/\\"))
@@ -90,7 +93,7 @@ def render(pattern: str, track: Track, fallbacks: dict[str, str],
             nonlocal emptied
             names = [n.strip() for n in m.group(1).split("|")]
             for name in names:
-                value = _value(name, track, artist_map)
+                value = _value(name, track, artist_map, multi_disc)
                 if value not in ("", 0):
                     return _format(value, m.group(2) or "")
             last = names[-1]

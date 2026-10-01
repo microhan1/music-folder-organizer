@@ -35,6 +35,8 @@
   "cli_history": "되돌리기 기록 보기 (실행 ID 포함)",
   "cli_undo_run": "고른 실행 하나를 되돌리기 (--history의 ID)",
   "cli_history_line": "{id}  {time}  {mode}  {count}개  {state}  → {dest}",
+  "lbl_example": "예:",
+  "pattern_buttons_hint": "{a|b} = a가 비면 b",
   "lbl_options": "옵션",
   "opt_sidecars": "앨범 부속 파일도 함께",
   "summary_sidecars": "부속 파일 {count}개 함께",

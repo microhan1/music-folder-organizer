@@ -35,6 +35,8 @@
   "cli_history": "显示撤销记录 (含执行 ID)",
   "cli_undo_run": "撤销选定的一次执行 (--history 中的 ID)",
   "cli_history_line": "{id}  {time}  {mode}  {count} 个  {state}  → {dest}",
+  "lbl_example": "示例:",
+  "pattern_buttons_hint": "{a|b} = a 为空时用 b",
   "lbl_options": "选项",
   "opt_sidecars": "一并移动专辑附带文件",
   "summary_sidecars": "附带文件 {count} 个一并移动",

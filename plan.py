@@ -53,6 +53,7 @@ class Item:
     guess: bool = False  # touched by an unconfirmed artist guess
     group: int = 0  # duplicate group id
     keep_name: bool = False  # a .cue sheet names this file: only its folder changes
+    multi_disc: bool = False  # its album has two or more discs: "{disc}" shows
 
     @property
     def key(self) -> str:
@@ -131,14 +132,40 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
     # folders whose .cue sheet names their own music files: renaming those files would break the sheet
     cue_dirs = {k for k, info in scan.dirs.items()
                 if info.cue_refs & {f.lower() for f in info.files if format_of(f)}}
+    multi = multi_disc_albums(scan.tracks, artist_map)
     claimed: set[str] = set()
     counters: dict[str, int] = {}
     for item in items:
         item.keep_name = key_of(item.track.folder) in cue_dirs and item.action not in (DUPE_MOVE, DUPE_TRASH)
+        item.multi_disc = album_id(item.track, artist_map) in multi
         _place(item, scan.root, opts, artist_map, claimed, counters)
     companions = _companions(items, scan, opts)
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
     return Plan(opts, items, companions, empty)
+
+
+def album_id(track: Track, artist_map) -> tuple[str, str]:
+    from artists import normalize, normalize_text
+
+    who = track.tags.album_artist or track.tags.artist
+    return normalize(artist_map(who)) if who else "", normalize_text(track.tags.album)
+
+
+def multi_disc_albums(tracks: list[Track], artist_map=lambda s: s) -> set[tuple[str, str]]:
+    """Albums with two or more discs: different disc numbers among their files, or a
+    total such as "1/2" that says so."""
+    discs: dict[tuple[str, str], set[int]] = {}
+    totals: set[tuple[str, str]] = set()
+    for t in tracks:
+        if not t.tags.album:
+            continue
+        key = album_id(t, artist_map)
+        parts = [p.strip() for p in (t.tags.disc or "").split("/")]
+        if parts[0].isdigit() and int(parts[0]) > 0:
+            discs.setdefault(key, set()).add(int(parts[0]))
+        if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) > 1:
+            totals.add(key)
+    return {k for k, v in discs.items() if len(v) > 1} | totals
 
 
 def _artist_note(item: Item, index: ArtistIndex | None) -> None:
@@ -165,7 +192,7 @@ def _target(item: Item, root: str, opts: Options, artist_map) -> tuple[list[str]
         rel = os.path.relpath(track.path, root)
         parts = rel.split(os.sep)
         return [opts.dupes_name, *parts[:-1]], os.path.splitext(parts[-1])[0], ext
-    segs = pattern_mod.render(opts.pattern, track, opts.fallbacks, artist_map)
+    segs = pattern_mod.render(opts.pattern, track, opts.fallbacks, artist_map, item.multi_disc)
     if item.keep_name:
         return segs[:-1], os.path.splitext(track.name)[0], ext  # the pattern picks the folder only
     return segs[:-1], segs[-1], ext

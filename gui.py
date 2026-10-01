@@ -56,6 +56,8 @@ MAX_LIST = 30  # lines of a failure list shown in a dialog
 TAG_FILLER_EXE = "music-tag-filler.exe"
 TAG_FILLER_EXTS = {".mp3", ".flac", ".m4a", ".ogg"}  # what music-tag-filler reads and writes
 CMDLINE_LIMIT = 30000  # Windows allows 32 767 characters; keep a margin
+PATTERN_BUTTONS = ("{artist}", "{album_artist}", "{album}", "{title}", "{track:02}", "{disc}", "{year}",
+                   "{genre}", "{artist_sort}")
 
 # UI font per language; tables always use a font with Hangul, kana and hanzi,
 # because file names mix scripts whatever the UI language is
@@ -232,6 +234,11 @@ class App:
         s.configure("Field.TLabel", foreground=MUTED, font=self.f_label)
         s.configure("Title.TLabel", font=self.f_title)
         s.configure("Path.TLabel", font=self.f_base)
+        s.configure("Example.TLabel", foreground=ACCENT_HOVER, font=self.f_small)
+        s.configure("Ph.TButton", padding=(5, 1), font=(self.f_small[0], 9), background=HEAD_BG, relief="raised",
+                    bordercolor=BORDER, lightcolor=HEAD_BG, darkcolor=HEAD_BG)
+        s.map("Ph.TButton", background=[("active", ACCENT_SOFT)], foreground=[("active", ACCENT_HOVER)],
+              bordercolor=[("active", ACCENT)])
         s.configure("Summary.TLabel", background=ACCENT_SOFT, foreground=ACCENT_HOVER, padding=(12, 8))
         s.configure("SummaryMuted.TLabel", background=HEAD_BG, foreground=MUTED, padding=(12, 8))
         s.configure("SummaryError.TLabel", background=ERROR_SOFT, foreground=ERROR_FG, padding=(12, 8))
@@ -364,10 +371,20 @@ class App:
         field(t("pattern_label"))
         pat = ttk.Frame(grid)
         pat.grid(row=row, column=1, sticky="we", pady=(0, 8))
-        ttk.Combobox(pat, textvariable=self.var_pattern, values=list(prefs_mod.PRESETS), width=58).pack(anchor="w")
-        hint = ttk.Label(pat, text=t("pattern_hint"), style="Small.TLabel", justify="left")
-        hint.pack(anchor="w", fill="x", pady=(3, 0))
-        self._wrap(hint)
+        top = ttk.Frame(pat)
+        top.pack(anchor="w", fill="x")
+        self.pattern_box = ttk.Combobox(top, textvariable=self.var_pattern, values=list(prefs_mod.PRESETS), width=58)
+        self.pattern_box.pack(side="left")
+        # placeholder buttons: a click puts the placeholder where the cursor is
+        chips = ttk.Frame(pat)
+        chips.pack(anchor="w", fill="x", pady=(5, 0))
+        for ph in PATTERN_BUTTONS:
+            ttk.Button(chips, text=ph, style="Ph.TButton", width=-1,  # natural width; the theme's minimum is ~11 chars
+                       command=lambda p=ph: self._insert_placeholder(p)).pack(side="left", padx=(0, 4))
+        # live example: the selected (or first) file, or a sample song
+        self.lbl_example = ttk.Label(pat, text="", style="Example.TLabel", justify="left")
+        self.lbl_example.pack(anchor="w", fill="x", pady=(5, 0))
+        self._wrap(self.lbl_example)
         row += 1
 
         field(t("dest_label"))
@@ -455,6 +472,7 @@ class App:
         self._attach_scroll(box, tree)
         tree.bind("<Button-1>", self._on_org_click)
         tree.bind("<space>", lambda e: self._toggle_selected())
+        tree.bind("<<TreeviewSelect>>", lambda e: self._update_example())
         self.tree = tree
         self._build_drop_zone(box)
         return tab
@@ -681,6 +699,7 @@ class App:
             self.plan = None
             self.lbl_summary.configure(text=t(problem), style="SummaryError.TLabel")
             self.btn_run.configure(state="disabled")
+            self._update_example()
             return
         if self.var_mode.get() == "copy" and scan_mod.key_of(self.dest()) == scan_mod.key_of(self.source):
             self.plan = None
@@ -695,6 +714,7 @@ class App:
         self._fill_dupes()
         self._fill_artists()
         self._fp_estimate()
+        self._update_example()
         has_plan = self.plan is not None and not self.busy
         self.btn_run.configure(state="normal" if has_plan and self.plan.summary()["move"] + self.plan.summary()["dupes"] + self.plan.summary()["folders"] else "disabled")
         self.btn_export.configure(state="normal" if has_plan and self.plan.untagged() else "disabled")
@@ -702,7 +722,18 @@ class App:
 
     def _fill_organize(self) -> None:
         tree = self.tree
+        selected, top = tree.selection(), tree.yview()[0]  # kept across the refill
         tree.delete(*tree.get_children())
+        try:
+            self._fill_organize_rows()
+        finally:
+            keep = [k for k in selected if tree.exists(k)]
+            if keep:
+                tree.selection_set(keep)
+            tree.yview_moveto(top)
+
+    def _fill_organize_rows(self) -> None:
+        tree = self.tree
         if self.scan is None and not self.busy:
             self.drop_zone.place(x=0, y=0, relwidth=1, relheight=1)  # empty state: a big drop target
         else:
@@ -787,6 +818,43 @@ class App:
         sec = dedupe.estimate_seconds(len(self.scan.tracks))
         self.lbl_fp.configure(text=t("msg_fp_estimate_short", min=sec // 60, sec=sec % 60), style="Muted.TLabel")
 
+    # ------------------------------------------------------------------ pattern helper
+    def _insert_placeholder(self, ph: str) -> None:
+        box = self.pattern_box
+        try:
+            if box.selection_present():
+                box.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        box.insert("insert", ph)  # the variable's trace re-plans
+        box.focus_set()
+
+    def _update_example(self) -> None:
+        """The file selected in the table (or the first one) through the current
+        pattern; a sample song before a folder is open."""
+        if not hasattr(self, "lbl_example"):
+            return
+        pattern = self.var_pattern.get().strip()
+        if pattern_mod.validate(pattern):
+            self.lbl_example.configure(text=f"{t('lbl_example')} —      ·  {t('pattern_buttons_hint')}")
+            return
+        item = None
+        if self.plan is not None and self.plan.items:
+            sel = self.tree.selection()
+            item = next((i for i in self.plan.items if sel and i.key == sel[0]), None) or self.plan.items[0]
+        if item is not None:
+            dst = item.dst if item.dst else t("lbl_trash")
+            text = f"{_rel(item.src, self.plan.options.root)}  →  {_rel(dst, self.plan.options.dest) if item.dst else dst}"
+        else:
+            sample = scan_mod.Track(os.path.join("C:\\", "Music", "track03.mp3"), "MP3", 1,
+                                    tags=scan_mod.TagSet(title="Title", artist="Artist", album="Album", track="3",
+                                                         disc="1/2", year="2024", genre="Pop"))
+            fallbacks = {k: self.prefs.fallback(k) for k in ("artist", "album", "year", "genre")}
+            segs = pattern_mod.render(pattern, sample, fallbacks)
+            text = "track03.mp3  →  " + "/".join(segs) + ".mp3"
+        # the "{a|b}" hint rides on this wrapping line so it is never cut off
+        self.lbl_example.configure(text=f"{t('lbl_example')} {text}      ·  {t('pattern_buttons_hint')}")
+
     # ------------------------------------------------------------------ organize tab
     def _on_org_click(self, event) -> str | None:
         if self.tree.identify_region(event.x, event.y) != "cell" or self.tree.identify_column(event.x) != "#1":
@@ -810,13 +878,7 @@ class App:
     def _set_checked(self, keys: list[str], value: bool) -> None:
         for k in keys:
             self.overrides[k] = value
-        top = self.tree.yview()[0]
-        sel = self.tree.selection()
-        self._replan()
-        self.tree.yview_moveto(top)
-        keep = [k for k in sel if self.tree.exists(k)]
-        if keep:
-            self.tree.selection_set(keep)
+        self._replan()  # _fill_organize keeps the selection and the scroll position
 
     # ------------------------------------------------------------------ dupes tab
     def _on_dupe_click(self, event) -> str | None:
