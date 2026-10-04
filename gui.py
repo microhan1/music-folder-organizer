@@ -1432,6 +1432,8 @@ class App:
             messagebox.showwarning(t("btn_undo"), t("msg_undo_blocked", time=first.time.replace("T", " "), id=first.id))
         elif res.nothing:
             messagebox.showinfo(t("btn_undo"), t("msg_no_log"))
+        elif res.log_error:
+            messagebox.showerror(t("btn_undo"), res.log_error)
         else:
             lines = [t("msg_undo_done", count=res.restored)]
             if res.skipped:
@@ -1439,7 +1441,10 @@ class App:
                 lines += [f"• {p} — {r}" for p, r in res.skipped[:MAX_LIST]]
             if res.trashed:
                 lines.append(t("msg_undo_trashed", count=len(res.trashed)))
-            (messagebox.showwarning if res.skipped or res.trashed else messagebox.showinfo)(t("btn_undo"), "\n".join(lines))
+            if res.log_unsaved:
+                lines.append(res.log_unsaved)
+            warn = res.skipped or res.trashed or res.log_unsaved
+            (messagebox.showwarning if warn else messagebox.showinfo)(t("btn_undo"), "\n".join(lines))
             self.lbl_status.configure(text=lines[0])
         self.cancel.clear()
         self._fill_history()

@@ -114,6 +114,14 @@
 - 해결: `_fill_organize` 자체가 선택과 스크롤 위치를 저장했다가 복원
 - 재발 방지: `test_example_follows_the_selected_row`. 규칙: **화면 상태(선택·스크롤) 복원은 개별 경로가 아니라 다시 그리는 함수 한 곳에서**
 
+### A21. 실행 중간에 로그 저장이 실패해도 계속 옮김 (A1을 반만 고침, 심각)
+- 증상: 첫 저장 뒤 로그 파일이 잠기거나(다른 프로그램·읽기 전용) 디스크가 차면, 50개마다 하는 중간 저장 `RunLog.flush()`가 오류를 삼키고 60개를 모두 옮김. 결과에는 실패가 하나도 없고, 되돌리기에는 기록되지 않은 파일이 빠짐. 사용자 코드 리뷰로 발견
+- 원인: A1 때 `__init__`의 첫 저장만 예외를 던지게 바꾸고 `flush()`의 `except OSError: pass`는 그대로 둠. 고쳤다 해도 로그 저장 실패를 그대로 `OSError`로 던지면 `execute()`의 파일별 `except OSError`에 잡혀 "그 파일만 실패"로 처리되어 계속 진행했을 것
+- 해결: `LogWriteError(OSError)`를 만들어 `flush()`가 던지게 함. `execute()`의 세 반복문(곡·부속 파일·빈 폴더)이 이를 `except OSError`보다 먼저 받아 `cancelled`로 멈춤. 이미 옮긴 파일은 `done`에 셈(기록은 메모리에 있음). `finally`에서 한 번 더 저장하고, 성공하면 `err_log_stopped`, 실패하면 `err_log_lost`를 `res.failed`에 넣어 화면에 보임
+- 같은 패턴이 `undo.py` 끝에도 있었음: 파일은 되돌리고 "되돌림" 저장 실패는 삼킴 → 기록에는 안 되돌린 실행으로 남음. 되돌리기 전에 로그를 한 번 저장해 써지는지 확인하고(안 되면 `log_error`, 아무것도 안 옮김), 끝 저장 실패는 `log_unsaved`로 GUI·CLI에 표시
+- 고치며 하나 더 발견: `save_log`가 실패하면 `organize_log.json.part`가 남았음 → 실패 시 지우게 함(되돌리기 시험의 스냅샷 비교가 잡음)
+- 재발 방지: `test_log_becomes_unwritable_mid_run_stops`(읽기 전용으로 바꾼 뒤 60개 → 48개에서 멈춤, `.part` 없음), `test_log_save_fails_once_then_undo_restores_everything`(한 번만 실패 → 되돌리기로 스냅샷 동일), `test_undo_with_unwritable_log_puts_nothing_back`, `test_undo_log_save_fails_at_the_end_is_reported`, `test_cli_undo_reports_log_errors`, `test_undo_with_unwritable_log_shows_error`(GUI). 옛 코드에서 실패하는 것 확인. 규칙: **원칙("기록 없이 옮기지 않는다")을 고칠 때는 그 함수 하나가 아니라 같은 기록을 쓰는 모든 경로를 `grep`으로 찾아 함께 고친다. 특정 원인으로 멈춰야 하는 오류는 넓은 `except`에 묻히지 않게 전용 예외로 만든다**
+
 ## B. 실제 데이터에서 알게 된 것 (기본값을 바꾼 이유)
 
 - B1. 56곡이 트랙 태그 없이 `01.제목.mp3` → 파일명 앞 숫자를 트랙으로 사용

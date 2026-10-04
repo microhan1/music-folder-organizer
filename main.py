@@ -122,12 +122,17 @@ def run_undo(folder: str, run_id: str | None = None) -> int:
     if res.nothing:
         print(t("msg_no_log"))
         return 1
+    if res.log_error:
+        print(res.log_error, file=sys.stderr)
+        return 1
     print(t("msg_undo_done", count=res.restored))
     for path, reason in res.skipped:
         print(t("msg_undo_skipped_item", path=path, reason=reason), file=sys.stderr)
     for path in res.trashed:
         print(t("msg_undo_trashed_item", path=path), file=sys.stderr)
-    return 1 if res.skipped else 0
+    if res.log_unsaved:
+        print(res.log_unsaved, file=sys.stderr)
+    return 1 if res.skipped or res.log_unsaved else 0
 
 
 def run_cli(args: argparse.Namespace) -> int:

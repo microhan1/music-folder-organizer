@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import stat
 import time
 import unicodedata
 
@@ -188,6 +189,25 @@ def test_run_then_undo(app, lib, dialogs):
     assert snapshot(lib) == before
     app._undo()
     assert "Nothing to undo" in dialogs["shown"][-1][1]
+
+
+def test_undo_with_unwritable_log_shows_error(app, lib, dialogs):
+    app.load_source(str(lib))
+    app.wait()
+    app._run()
+    app.wait()
+    app.wait()
+    organized = snapshot(lib)
+    log = lib / "organize_log.json"
+    os.chmod(log, stat.S_IREAD)
+    try:
+        app._undo()
+        app.wait()
+        app.wait()
+    finally:
+        os.chmod(log, stat.S_IREAD | stat.S_IWRITE)
+    assert dialogs["shown"][-1][0] == "showerror" and "Nothing was undone" in dialogs["shown"][-1][1]
+    assert snapshot(lib) == organized
 
 
 def test_run_declined_changes_nothing(app, lib, dialogs):

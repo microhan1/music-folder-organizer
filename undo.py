@@ -27,6 +27,8 @@ class UndoResult:
     nothing: bool = False  # no log, or every run already undone
     cancelled: bool = False
     blocked_by: list["RunInfo"] = dataclasses.field(default_factory=list)  # newer runs to undo first
+    log_error: str = ""  # the log cannot be written: nothing was undone
+    log_unsaved: str = ""  # files were put back but the log could not record it
 
 
 @dataclasses.dataclass
@@ -153,6 +155,11 @@ def undo(log_path: str | None, progress: Callable[[int, int], None] | None = Non
         res.blocked_by = blockers(me, known)
         if res.blocked_by:
             return res
+    try:
+        mover.save_log(log_path, data)  # same principle as a run: no file moves before the log is known to be writable
+    except OSError as exc:
+        res.log_error = i18n.t("err_undo_log_write", path=log_path, error=exc)
+        return res
     ops = list(reversed(run["ops"]))
     for n, op in enumerate(ops, 1):
         if cancel is not None and cancel.is_set():
@@ -182,8 +189,8 @@ def undo(log_path: str | None, progress: Callable[[int, int], None] | None = Non
             run["undo_skipped"] = [{"path": p, "reason": r} for p, r in res.skipped]
     try:
         mover.save_log(log_path, data)
-    except OSError:
-        pass
+    except OSError as exc:
+        res.log_unsaved = i18n.t("err_undo_log_unsaved", path=log_path, error=exc)
     return res
 
 

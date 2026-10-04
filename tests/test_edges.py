@@ -8,6 +8,7 @@ import threading
 
 import pytest
 
+import i18n
 import mover
 import pattern
 import plan as plan_mod
@@ -260,6 +261,96 @@ def test_cancel_mid_run_then_undo(tmp_path):
     assert u.restored == 2 and not u.skipped
     os.remove(res.log_path)
     assert snapshot(tmp_path) == before
+
+
+def _sixty(tmp_path):
+    for i in range(60):
+        put(tmp_path, "tone.ogg", f"in/{i:02}.ogg", title=f"T{i}", artist="A", album="B", tracknumber=str(i + 1))
+
+
+def test_log_becomes_unwritable_mid_run_stops(tmp_path):
+    _sixty(tmp_path)
+    log = tmp_path / "organize_log.json"
+
+    def lock_log(done, total):
+        if done == 1:  # the first save (before any move) went through; now nothing more can be written
+            os.chmod(log, stat.S_IREAD)
+
+    try:
+        res = mover.execute(build(tmp_path)[1], progress=lock_log)
+    finally:
+        os.chmod(log, stat.S_IREAD | stat.S_IWRITE)
+    # ops: mkdir A, mkdir A/B, then moves; the 50th op is the first save and it fails -> stop there
+    assert res.cancelled and res.done == mover.FLUSH_EVERY - 2
+    assert len(os.listdir(tmp_path / "in")) == 60 - res.done
+    assert res.failed == [(str(log), i18n.t("err_log_lost"))]
+    assert not (tmp_path / "organize_log.json.part").exists()
+
+
+def test_log_save_fails_once_then_undo_restores_everything(tmp_path, monkeypatch):
+    _sixty(tmp_path)
+    before = snapshot(tmp_path)
+    real, calls = mover.save_log, []
+
+    def flaky(path, data):
+        calls.append(path)
+        if len(calls) == 2:  # the first mid-run save
+            raise PermissionError(13, "locked by another program", path)
+        real(path, data)
+
+    monkeypatch.setattr(mover, "save_log", flaky)
+    res = mover.execute(build(tmp_path)[1])
+    assert res.cancelled and res.done == mover.FLUSH_EVERY - 2
+    assert res.failed == [(res.log_path, i18n.t("err_log_stopped"))]  # the last save worked
+    monkeypatch.setattr(mover, "save_log", real)
+    u = undo.undo(res.log_path)
+    assert u.restored == res.done and not u.skipped
+    os.remove(res.log_path)
+    assert snapshot(tmp_path) == before
+
+
+def test_undo_with_unwritable_log_puts_nothing_back(tmp_path):
+    put(tmp_path, "song-128.mp3", "in/a.mp3", title="A", artist="X", album="Y", tracknumber="1")
+    res = mover.execute(build(tmp_path)[1])
+    organized = snapshot(tmp_path)
+    os.chmod(res.log_path, stat.S_IREAD)
+    try:
+        u = undo.undo(res.log_path)
+    finally:
+        os.chmod(res.log_path, stat.S_IREAD | stat.S_IWRITE)
+    assert u.log_error and u.restored == 0 and not u.log_unsaved
+    assert snapshot(tmp_path) == organized
+    assert undo.undo(res.log_path).restored == 1  # writable again: undo works
+
+
+def test_undo_log_save_fails_at_the_end_is_reported(tmp_path, monkeypatch):
+    put(tmp_path, "song-128.mp3", "in/a.mp3", title="A", artist="X", album="Y", tracknumber="1")
+    res = mover.execute(build(tmp_path)[1])
+    real, calls = mover.save_log, []
+
+    def flaky(path, data):
+        calls.append(path)
+        if len(calls) == 2:  # the first save (before undoing) works, the last one fails
+            raise PermissionError(13, "locked by another program", path)
+        real(path, data)
+
+    monkeypatch.setattr(mover, "save_log", flaky)
+    u = undo.undo(res.log_path)
+    assert u.restored == 1 and u.log_unsaved and not u.log_error
+    assert (tmp_path / "in" / "a.mp3").exists()
+
+
+def test_cli_undo_reports_log_errors(tmp_path, capsys, monkeypatch):
+    import main
+
+    put(tmp_path, "song-128.mp3", "in/a.mp3", title="A", artist="X", album="Y", tracknumber="1")
+    res = mover.execute(build(tmp_path)[1])
+    os.chmod(res.log_path, stat.S_IREAD)
+    try:
+        assert main.run_undo(str(tmp_path)) == 1
+    finally:
+        os.chmod(res.log_path, stat.S_IREAD | stat.S_IWRITE)
+    assert i18n.t("err_undo_log_write", path=res.log_path, error="").split("(")[0] in capsys.readouterr().err
 
 
 def test_cancelled_undo_continues_next_time(tmp_path):

@@ -32,6 +32,10 @@ class CopyMismatch(OSError):
     pass
 
 
+class LogWriteError(OSError):
+    """The undo log could not be saved mid-run: the run has to stop, not skip one file."""
+
+
 @dataclasses.dataclass
 class Result:
     done: int = 0
@@ -60,9 +64,13 @@ def load_log(path: str) -> dict:
 
 def save_log(path: str, data: dict) -> None:
     tmp = path + ".part"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except BaseException:
+        _remove_quietly(tmp)  # a failed save leaves no .part behind
+        raise
 
 
 class RunLog:
@@ -91,11 +99,12 @@ class RunLog:
             self.flush()
 
     def flush(self) -> None:
+        """Raises LogWriteError; the ops stay in memory so a later flush can still save them."""
         self._pending = 0
         try:
             save_log(self.path, self.data)
-        except OSError:
-            pass
+        except OSError as exc:
+            raise LogWriteError(exc.errno, str(exc), self.path) from exc
 
     def discard(self) -> None:
         """Nothing happened: leave the log as it was before this run."""
@@ -277,6 +286,7 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
     log = RunLog(opts.dest, opts.root, opts.mode)
     res.log_path = log.path
     failed_keys: set[str] = set()
+    log_stopped = False
     step = 0
 
     def tick() -> None:
@@ -293,7 +303,7 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
             try:
                 if item.action == DUPE_TRASH:
                     trash(item.src)
-                    log.add(op="trash", src=item.src)
+                    op = dict(op="trash", src=item.src)
                     res.trashed += 1
                 else:
                     if not os.path.lexists(item.src):  # gone since the preview: create no folders for it
@@ -302,11 +312,17 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
                     if item.action == COPY:
                         copy_file(item.src, item.dst)
                         st = os.stat(item.dst)
-                        log.add(op="copy", src=item.src, dst=item.dst, size=st.st_size, mtime_ns=st.st_mtime_ns)
-                    elif item.action in (MOVE, DUPE_MOVE):
+                        op = dict(op="copy", src=item.src, dst=item.dst, size=st.st_size, mtime_ns=st.st_mtime_ns)
+                    else:  # MOVE, DUPE_MOVE
                         move_file(item.src, item.dst)
-                        log.add(op="move", src=item.src, dst=item.dst)
-                res.done += 1
+                        op = dict(op="move", src=item.src, dst=item.dst)
+                res.done += 1  # the file has moved: count it even if saving its log entry fails
+                log.add(**op)
+            except LogWriteError:
+                log_stopped = True
+                res.cancelled = True
+                tick()
+                break
             except OSError as exc:
                 failed_keys.add(item.key)
                 failed_keys.add("dir:" + key_of(os.path.dirname(item.src)))  # its album's extras stay too
@@ -329,18 +345,32 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
                     else:
                         move_file(c.src, c.dst)
                         log.add(op="move", src=c.src, dst=c.dst)
+                except LogWriteError:
+                    log_stopped = True
+                    res.cancelled = True
+                    break
                 except OSError as exc:
                     res.failed.append((c.src, reason_of(exc)))
                 tick()
         if not res.cancelled:
             for folder in plan.empty_dirs:
                 if remove_junk_folder(folder):
-                    log.add(op="rmdir", path=folder)
                     res.folders_removed += 1
+                    try:
+                        log.add(op="rmdir", path=folder)
+                    except LogWriteError:
+                        log_stopped = True
+                        res.cancelled = True
+                        break
                 tick()
     finally:
         if log.run["ops"]:
-            log.flush()
+            try:
+                log.flush()  # one more try: everything moved so far is in memory
+                if log_stopped:
+                    res.failed.append((log.path, i18n.t("err_log_stopped")))
+            except LogWriteError:
+                res.failed.append((log.path, i18n.t("err_log_lost")))
             i18n.update_settings(last_log=log.path)
         else:
             log.discard()
