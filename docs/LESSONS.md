@@ -158,3 +158,4 @@
 - D10. 실제 폴더 복사본 정리 시 읽기 전용 파일 때문에 `rmtree` 실패 → `onexc`에서 `chmod` 후 삭제
 - D12. 디버그 명령 앞에 남은 `cat > 파일`이 표준 입력을 기다려 2분 동안 멈춤(heredoc은 뒤의 python에 붙음) → 스크립트는 Write 도구로 파일에 쓰고 실행한다
 - D13. GUI 시험이 화면 잠금·절전 중 몇 시간씩 멈춘 채 통과함(창 이벤트가 안 돎) → GUI 시험은 `timeout`을 걸고 돌리고, 시간이 비정상이면 다시 돌려 확인한다
+- D14. 릴리스 빌드에서 PyInstaller를 `--specpath build`로 직접 부르자 `--add-data`·`--add-binary`의 상대 경로가 spec 폴더(`build\`) 기준으로 풀려 `build\third_party\fpcalc.exe`를 못 찾고 실패 → 직접 부를 때는 모든 자료 경로를 절대 경로로 쓰고, 빌드 뒤 `$LASTEXITCODE`와 exe 수정 시각을 확인한다(실패해도 예전 exe가 그 자리에 남아 있음)
