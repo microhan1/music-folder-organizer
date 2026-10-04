@@ -6,6 +6,8 @@ thread; results come back through a queue polled with after().
 """
 from __future__ import annotations
 
+import dataclasses
+import itertools
 import os
 import queue
 import subprocess
@@ -34,6 +36,7 @@ except Exception:  # pragma: no cover - optional dependency
     _HAS_DND = False
 
 ON, OFF = "☑", "☐"
+FILL_CHUNK = 1000  # organize-table rows per slice of the event loop (~40 ms)
 # palette: light grey page, white cards, the icon's green as the accent
 BG = "#f4f5f7"
 SURFACE = "#ffffff"
@@ -162,6 +165,13 @@ class App:
         self.queue: queue.Queue = queue.Queue()
         self.alias_error = ""
         self._plan_job: str | None = None
+        # the plan is built on a worker thread; one at a time, the newest request wins
+        self.planning = False
+        self._plan_again = False
+        self._plan_gen = 0  # bumped by every change that makes a plan in flight stale
+        self._status_before_plan = ""
+        self._fill_job: str | None = None  # the organize table is refilled in chunks
+        self._fill_restore: tuple = ((), 0.0)  # selection and scroll to put back after the last chunk
         self._filler: subprocess.Popen | None = None  # music-tag-filler opened from here
         self.history: tk.Toplevel | None = None  # the undo history window, when open
         self.settings_win: tk.Toplevel | None = None
@@ -670,6 +680,7 @@ class App:
             return
         self.source = os.path.abspath(folder)
         self.lbl_source.configure(text=_short(self.source), style="Path.TLabel")
+        self._plan_gen += 1  # a plan still being built belongs to the old folder
         self.scan, self.index, self.groups, self.plan = None, None, [], None
         self.overrides.clear()
         excl = session.excludes(self.source, self.dest(), self.prefs)
@@ -702,6 +713,10 @@ class App:
         if self.scan is None or self.busy:
             self._refresh_all()
             return
+        self._plan_gen += 1  # whatever is in flight now describes old settings
+        # these tabs show the groups and the artist index, not the plan: never let them lag
+        self._fill_dupes()
+        self._fill_artists()
         problem = pattern_mod.validate(self.var_pattern.get())
         if problem:
             self.plan = None
@@ -714,8 +729,52 @@ class App:
             self.lbl_summary.configure(text=t("err_copy_in_place"), style="SummaryError.TLabel")
             self.btn_run.configure(state="disabled")
             return
-        self.plan = plan_mod.build(self.scan, self.options(), self.index, self.groups, self.overrides)
+        if self.planning:
+            self._plan_again = True  # started again with the newest settings when this one returns
+        else:
+            self._start_plan()
+        self._update_example()  # follows the typed pattern now, not when the plan arrives
+
+    def _start_plan(self) -> None:
+        """plan.build on a worker thread. It gets copies of what the window can change
+        meanwhile (ticks, kept duplicates), and tk variables are read here, not there."""
+        gen = self._plan_gen
+        scan, index, opts, overrides = self.scan, self.index, self.options(), dict(self.overrides)
+        groups = [dataclasses.replace(g, members=list(g.members), keep=set(g.keep)) for g in self.groups]
+        self.planning, self._plan_again = True, False
+        self.btn_run.configure(state="disabled")  # the plan on screen is about to change
+        self._status_before_plan = self.lbl_status.cget("text")
+        self.lbl_status.configure(text=t("msg_planning"))
+
+        def work():
+            try:
+                self.queue.put(("planned", gen, plan_mod.build(scan, opts, index, groups, overrides)))
+            except Exception as exc:  # keep the GUI alive and say what happened
+                self.queue.put(("planned", gen, exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _planned(self, gen: int, plan) -> None:
+        self.planning = False
+        if self.lbl_status.cget("text") == t("msg_planning"):
+            self.lbl_status.configure(text=self._status_before_plan)
+        if self._plan_again and self.scan is not None and not self.busy:
+            self._replan()
+            return
+        if gen != self._plan_gen:
+            self._refresh_all()  # stale (another folder, or the pattern became invalid): drop it
+            return
+        if isinstance(plan, Exception):
+            self.plan = None
+            self.lbl_summary.configure(text=str(plan), style="SummaryError.TLabel")
+            self._refresh_all()
+            return
+        self.plan = plan
         self._refresh_all()
+
+    def plan_ready(self) -> bool:
+        """The plan on screen matches the current settings (nothing pending or in flight)."""
+        return self.plan is not None and not self.planning and self._plan_job is None and not self.busy
 
     def _refresh_all(self) -> None:
         self._fill_organize()
@@ -724,24 +783,48 @@ class App:
         self._fp_estimate()
         self._update_example()
         has_plan = self.plan is not None and not self.busy
-        self.btn_run.configure(state="normal" if has_plan and self.plan.summary()["move"] + self.plan.summary()["dupes"] + self.plan.summary()["folders"] else "disabled")
+        self.btn_run.configure(state="normal" if self.plan_ready() and self.plan.summary()["move"] + self.plan.summary()["dupes"] + self.plan.summary()["folders"] else "disabled")
         self.btn_export.configure(state="normal" if has_plan and self.plan.untagged() else "disabled")
         self.btn_undo.configure(state="disabled" if self.busy else "normal")
 
     def _fill_organize(self) -> None:
+        """Rows go in FILL_CHUNK at a time with the event loop running in between:
+        10,000 rows in one go held the window for ~0.4 s. The selection and the
+        scroll position are put back after the last chunk (LESSONS A20)."""
         tree = self.tree
-        selected, top = tree.selection(), tree.yview()[0]  # kept across the refill
+        if self._fill_job is not None:  # a refill still under way: it was going to restore these
+            self.root.after_cancel(self._fill_job)
+            self._fill_job = None
+        else:
+            self._fill_restore = (tree.selection(), tree.yview()[0])
         tree.delete(*tree.get_children())
-        try:
-            self._fill_organize_rows()
-        finally:
-            keep = [k for k in selected if tree.exists(k)]
-            if keep:
-                tree.selection_set(keep)
-            tree.yview_moveto(top)
+        self._fill_chunk(self._organize_rows())
 
-    def _fill_organize_rows(self) -> None:
+    def _fill_chunk(self, rows) -> None:
+        self._fill_job = None
         tree = self.tree
+        if not tree.winfo_exists():
+            return
+        chunk = list(itertools.islice(rows, FILL_CHUNK))
+        for iid, tags, values in chunk:
+            tree.insert("", "end", iid=iid, tags=tags, values=values)
+        if len(chunk) == FILL_CHUNK:  # maybe more
+            self._fill_job = self.root.after(1, self._fill_chunk, rows)
+            return
+        selected, top = self._fill_restore
+        keep = [k for k in selected if tree.exists(k)]
+        if keep and not tree.selection():  # unless a row was picked while the rows came in
+            tree.selection_set(keep)
+        tree.yview_moveto(top)
+        self._update_example()  # the selected row is known only now
+
+    @property
+    def filling(self) -> bool:
+        return self._fill_job is not None
+
+    def _organize_rows(self):
+        """Sets the summary line now; returns the (iid, tags, values) of each table
+        row as an iterator, for the chunks to take from."""
         if self.scan is None and not self.busy:
             self.drop_zone.place(x=0, y=0, relwidth=1, relheight=1)  # empty state: a big drop target
         else:
@@ -756,7 +839,7 @@ class App:
         if self.plan is None:
             if self.scan is None:
                 self.lbl_summary.configure(text=t("drop_sub"), style="SummaryMuted.TLabel")
-            return
+            return iter(())
         s = self.plan.summary()
         text = t("summary", **{k: s[k] for k in ("move", "same", "untagged", "dupes", "folders")})
         if s["sidecars"]:
@@ -766,25 +849,29 @@ class App:
         if self.alias_error:
             text += "   ·   " + t("err_artists_file", path=self.prefs.artists_file(), error=self.alias_error)
         self.lbl_summary.configure(text=text, style="Summary.TLabel")
-        dest = self.plan.options.dest
-        for n, item in enumerate(self.plan.items):
-            tags = ["odd"] if n % 2 else []
-            if item.status == plan_mod.CONFLICT:
-                tags.append("conflict")
-            if item.status == plan_mod.DUP:
-                tags.append("dup")
-            if item.guess:
-                tags.append("guess")
-            if not item.moves:
-                tags.append("muted")
-            new = t("lbl_trash") if item.action == plan_mod.DUPE_TRASH else _rel(item.dst, dest)
-            status = t(f"status_{item.status}")
-            if item.keep_name:
-                status += " · " + t("status_keep_name")
-            if item.truncated:
-                status += " · " + t("status_truncated")
-            tree.insert("", "end", iid=item.key, tags=tags,
-                        values=(ON if item.checked else OFF, _rel(item.src, self.plan.options.root), new, status, item.artist_note))
+        plan = self.plan  # a newer plan starts a new fill; this one keeps its own
+
+        def rows():
+            for n, item in enumerate(plan.items):
+                tags = ["odd"] if n % 2 else []
+                if item.status == plan_mod.CONFLICT:
+                    tags.append("conflict")
+                if item.status == plan_mod.DUP:
+                    tags.append("dup")
+                if item.guess:
+                    tags.append("guess")
+                if not item.moves:
+                    tags.append("muted")
+                new = t("lbl_trash") if item.action == plan_mod.DUPE_TRASH else _rel(item.dst, plan.options.dest)
+                status = t(f"status_{item.status}")
+                if item.keep_name:
+                    status += " · " + t("status_keep_name")
+                if item.truncated:
+                    status += " · " + t("status_truncated")
+                yield item.key, tags, (ON if item.checked else OFF, _rel(item.src, plan.options.root), new, status,
+                                       item.artist_note)
+
+        return rows()
 
     def _fill_dupes(self) -> None:
         tree = self.dtree
@@ -850,7 +937,15 @@ class App:
         if self.plan is not None and self.plan.items:
             sel = self.tree.selection()
             item = next((i for i in self.plan.items if sel and i.key == sel[0]), None) or self.plan.items[0]
-        if item is not None:
+        stale = not self.plan_ready() or self.plan.options.pattern != pattern
+        if item is not None and stale and item.action not in (plan_mod.DUPE_MOVE, plan_mod.DUPE_TRASH):
+            # the new plan is still being built: show this file through the pattern as typed now
+            segs = pattern_mod.render(pattern, item.track, self.plan.options.fallbacks,
+                                      self.index.rep if self.index else (lambda s: s), item.multi_disc)
+            if item.keep_name:
+                segs[-1] = os.path.splitext(item.track.name)[0]
+            text = f"{_rel(item.src, self.plan.options.root)}  →  {'/'.join(segs)}{os.path.splitext(item.src)[1]}"
+        elif item is not None:
             dst = item.dst if item.dst else t("lbl_trash")
             text = f"{_rel(item.src, self.plan.options.root)}  →  {_rel(dst, self.plan.options.dest) if item.dst else dst}"
         else:
@@ -1002,7 +1097,7 @@ class App:
 
     # ------------------------------------------------------------------ run / undo
     def _run(self) -> None:
-        if self.plan is None or self.busy:
+        if not self.plan_ready():  # a change is not in the plan yet: never run the old one
             return
         if any(g.applied and not g.keep for g in self.groups):
             messagebox.showwarning(t("app_title"), t("msg_need_one_keep"))
@@ -1370,6 +1465,9 @@ class App:
 
     def _handle(self, msg) -> None:
         kind = msg[0]
+        if kind == "planned":  # not a "busy" job: the window stays usable meanwhile
+            self._planned(msg[1], msg[2])
+            return
         if kind == "progress":
             _, done, total, key = msg
             self.progress.configure(maximum=max(total, 1), value=done)

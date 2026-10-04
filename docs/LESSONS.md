@@ -120,7 +120,18 @@
 - 해결: `LogWriteError(OSError)`를 만들어 `flush()`가 던지게 함. `execute()`의 세 반복문(곡·부속 파일·빈 폴더)이 이를 `except OSError`보다 먼저 받아 `cancelled`로 멈춤. 이미 옮긴 파일은 `done`에 셈(기록은 메모리에 있음). `finally`에서 한 번 더 저장하고, 성공하면 `err_log_stopped`, 실패하면 `err_log_lost`를 `res.failed`에 넣어 화면에 보임
 - 같은 패턴이 `undo.py` 끝에도 있었음: 파일은 되돌리고 "되돌림" 저장 실패는 삼킴 → 기록에는 안 되돌린 실행으로 남음. 되돌리기 전에 로그를 한 번 저장해 써지는지 확인하고(안 되면 `log_error`, 아무것도 안 옮김), 끝 저장 실패는 `log_unsaved`로 GUI·CLI에 표시
 - 고치며 하나 더 발견: `save_log`가 실패하면 `organize_log.json.part`가 남았음 → 실패 시 지우게 함(되돌리기 시험의 스냅샷 비교가 잡음)
-- 재발 방지: `test_log_becomes_unwritable_mid_run_stops`(읽기 전용으로 바꾼 뒤 60개 → 48개에서 멈춤, `.part` 없음), `test_log_save_fails_once_then_undo_restores_everything`(한 번만 실패 → 되돌리기로 스냅샷 동일), `test_undo_with_unwritable_log_puts_nothing_back`, `test_undo_log_save_fails_at_the_end_is_reported`, `test_cli_undo_reports_log_errors`, `test_undo_with_unwritable_log_shows_error`(GUI). 옛 코드에서 실패하는 것 확인. 규칙: **원칙("기록 없이 옮기지 않는다")을 고칠 때는 그 함수 하나가 아니라 같은 기록을 쓰는 모든 경로를 `grep`으로 찾아 함께 고친다. 특정 원인으로 멈춰야 하는 오류는 넓은 `except`에 묻히지 않게 전용 예외로 만든다**
+- 재발 방지: (v0.4.0 1번에서 journal 방식에 맞게 `test_journal_fails_mid_run_stops`·`test_journal_and_final_save_both_fail`·`test_final_save_fails_and_the_journal_is_merged_later`로 바뀜), `test_undo_with_unwritable_log_puts_nothing_back`, `test_undo_log_save_fails_at_the_end_is_reported`, `test_cli_undo_reports_log_errors`, `test_undo_with_unwritable_log_shows_error`(GUI). 옛 코드에서 실패하는 것 확인. 규칙: **원칙("기록 없이 옮기지 않는다")을 고칠 때는 그 함수 하나가 아니라 같은 기록을 쓰는 모든 경로를 `grep`으로 찾아 함께 고친다. 특정 원인으로 멈춰야 하는 오류는 넓은 `except`에 묻히지 않게 전용 예외로 만든다**
+
+### A22. 계획을 작업 스레드로 옮기자 계획을 읽던 화면 일부가 늦게 따라옴 (v0.4.0 2번, 커밋 전 발견)
+- 증상: ① 정리 규칙 칸에는 새 규칙이 보이는데 바로 아래 예시는 옛 규칙 결과(`01 - Song 0.ogg`)를 보여 줌 — 10,000곡 스크린샷에서 발견 ② 가수 통합 탭이 계획이 도착할 때까지 갱신되지 않아, 이름 바꾸기 직후 "풀기"가 옛 표의 줄에 적용됨 — GUI 테스트가 잡음
+- 원인: `_refresh_all` 한 곳이 모든 탭과 예시를 다시 그렸는데, 계획이 비동기가 되면서 이 호출이 계획 도착 때로 밀림. 예시는 계획의 `dst`를 읽고, 가수 통합·중복 탭은 계획과 무관한데도 같이 밀림
+- 해결: 계획과 무관한 중복·가수 통합 탭은 `_replan`에서 바로 그림. 예시는 계획이 현재 설정과 다르면(`plan_ready()`가 아니거나 규칙이 다름) 고른 파일을 지금 규칙으로 직접 그림(중복으로 가는 파일은 계획 경로 그대로)
+- 재발 방지: `test_example_follows_the_typed_pattern_while_the_plan_is_built`, 가수 통합 테스트들. 규칙: **계산을 비동기로 바꿀 때는 그 결과를 읽는 곳을 모두 `grep`(`self.plan`)해서, 늦게 따라와도 되는지 하나씩 정한다. 계획과 무관한 화면은 계획을 기다리지 않는다**
+
+### A23. 정리 규칙을 바꾸고 0.25초 안에 "실행"을 누르면 옛 계획으로 실행될 수 있었음 (예전부터 있던 문제)
+- 증상: 규칙·옵션 변경 뒤 재계획은 0.25초 뒤에 도는데, 그 사이 "실행"은 화면의 옛 계획을 그대로 실행. 계획을 비동기로 바꾸며 이 틈이 1~3초로 커질 뻔함 — `test_run_with_unwritable_log_shows_error`가 대상 폴더를 바꾸고 바로 실행하다 드러남
+- 해결: `plan_ready()`(계획 있음, 대기 중인 재계획 없음, 계산 중 아님, 작업 중 아님)일 때만 "실행" 버튼이 켜지고 `_run`도 이를 확인
+- 재발 방지: `test_run_never_uses_a_plan_older_than_the_settings`. 규칙: **화면의 결과를 실행하는 버튼은 그 결과가 지금 설정으로 만든 것인지 확인한다**
 
 ## B. 실제 데이터에서 알게 된 것 (기본값을 바꾼 이유)
 
@@ -161,3 +172,5 @@
 - D14. 릴리스 빌드에서 PyInstaller를 `--specpath build`로 직접 부르자 `--add-data`·`--add-binary`의 상대 경로가 spec 폴더(`build\`) 기준으로 풀려 `build\third_party\fpcalc.exe`를 못 찾고 실패 → 직접 부를 때는 모든 자료 경로를 절대 경로로 쓰고, 빌드 뒤 `$LASTEXITCODE`와 exe 수정 시각을 확인한다(실패해도 예전 exe가 그 자리에 남아 있음)
 - D15. Edit 도구의 새 문자열이 `"키": `처럼 공백으로 끝나면 끝 공백이 잘려 `"키":"값"`이 됨(A21 때 언어 파일 4개, JSON은 유효해 테스트가 못 잡음. v0.4.0 1번 때 발견해 고침) → 새 문자열은 공백으로 끝내지 않고 줄 전체를 넣는다. 언어 파일을 고친 뒤 `grep -c '":"' lang/*.json`이 0인지 확인
 - D16. 실제 폴더 사본에 사용자의 예전 `organize_log.json`이 들어 있는데 검증 스크립트가 끝에 루트 로그를 지워 스냅샷이 "다름"으로 나옴 → 사본 검증은 루트 로그를 비교에서 빼고, 예전 실행 기록이 그대로인지 따로 확인한다(예전 버전 로그와의 호환 확인도 겸함)
+- D17. 창이 멈춘 시간을 `while: r.update()` 반복으로 쟀더니, 1,000줄씩 `after()`로 나눠 넣은 표 채우기가 `update()` 한 번 안에서 모두 처리돼 0.45초 멈춤으로 보임(실제 앱은 `mainloop`라 조각 사이에 클릭·다시 그리기를 처리) → GUI 반응성은 `mainloop` 안에서 `after(10)` 탐침이 얼마나 늦게 불리는지로 잰다(scratchpad `big_latency.py` 방식)
+- D18. Git Bash에서 D: 저장소에 있으면서 C: 스크래치패드 파일에 `sed -i`를 쓰면 "Invalid cross-device link"로 실패(파일은 그대로) → 스크래치패드 파일 수정도 Edit 도구로

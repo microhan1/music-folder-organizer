@@ -63,12 +63,17 @@ def _pump(root, sec):
         time.sleep(0.01)
 
 
+def _idle(a) -> bool:
+    """No job, and the plan on screen matches the settings (built on a worker thread)."""
+    return not a.busy and not a.planning and a._plan_job is None and not a.filling
+
+
 def _wait(a):
     for _ in range(600):
         _pump(a.root, 0.05)
-        if not a.busy:
+        if _idle(a):
             _pump(a.root, 0.1)
-            if not a.busy:
+            if _idle(a):
                 return
     raise TimeoutError
 
@@ -104,12 +109,14 @@ def test_real_click_on_checkbox_column(app, lib):
     first = app.tree.get_children()[0]
     x, y, w, h = app.tree.bbox(first, "check")
     app.tree.event_generate("<Button-1>", x=x + w // 2, y=y + h // 2)
-    app.pump()
+    app.wait()  # the plan is rebuilt on a worker thread
     item = next(i for i in app.plan.items if i.key == first)
     assert not item.checked and app.tree.set(first, "check") == "☐"
     app._toggle_all()
+    app.wait()
     assert all(i.checked for i in app.plan.items)
     app._toggle_all()
+    app.wait()
     assert not any(i.checked for i in app.plan.items)
     assert str(app.btn_run.cget("state")) == "disabled" or app.plan.summary()["folders"] == 0
 
@@ -122,10 +129,12 @@ def test_stage_two_group_apply_and_keep_rules(app, lib, dialogs):
     before = app.plan.summary()["dupes"]
     g2.applied = False
     app._replan()
+    app.wait()
     assert app.plan.summary()["dupes"] == before - 1
     g2.applied = True
     g2.keep.clear()
     app._replan()
+    app.wait()
     app._run()  # refused: an applied group keeps nothing
     assert dialogs["shown"][-1][0] == "showwarning" and not app.busy
     assert (lib / "dl" / "a.mp3").exists()
@@ -229,6 +238,7 @@ def test_run_with_unwritable_log_shows_error(app, lib, dialogs, tmp_path):
     app.dest_other = str(tmp_path / "blocker" / "out")
     app.var_where.set("other")
     app._replan()
+    app.wait()
     app._run()
     app.wait()
     assert dialogs["shown"][-1][0] == "showerror" and "Nothing was moved" in dialogs["shown"][-1][1]
@@ -255,6 +265,7 @@ def test_artist_rename_ungroup_and_guess(app, lib, dialogs, tmp_path):
     dialogs["ask"] = "岡田有希子"
     app._rename_rep()
     assert app.index.rep("岡田 有希子") == "岡田有希子"
+    app.wait()
     assert any(i.dst.split(os.sep)[-3] == "岡田有希子" for i in app.plan.items if i.moves and i.status != "dup")
     # split it again
     cluster_row = next(r for r in app.atree.get_children() if r.startswith("c") and "岡田" in app.atree.item(r, "text"))
@@ -633,3 +644,89 @@ def test_settings_closes_on_language_switch(app):
     assert not app.settings_win.winfo_exists()
     app.var_lang.set(i18n.LANG_NAMES["en"])
     app._on_lang()
+
+
+# ------------------------------------------------------------------ v0.4.0 item 2: the plan is built off the UI thread
+@pytest.fixture
+def slow_build(monkeypatch):
+    """plan.build that takes a while, as with 10,000 files, and counts its calls."""
+    import plan as plan_mod
+
+    real, calls = plan_mod.build, []
+
+    def build(scan, opts, *a, **kw):
+        calls.append(opts.pattern)
+        time.sleep(0.4)
+        return real(scan, opts, *a, **kw)
+
+    monkeypatch.setattr(plan_mod, "build", build)
+    return calls
+
+
+def test_window_stays_responsive_while_planning(app, lib, slow_build):
+    app.load_source(str(lib))
+    app.wait()
+    t0 = time.perf_counter()
+    app._replan()
+    assert time.perf_counter() - t0 < 0.2 and app.planning  # returned at once; the worker builds
+    t0 = time.perf_counter()
+    app.root.update()
+    assert time.perf_counter() - t0 < 0.2
+    assert str(app.btn_run.cget("state")) == "disabled"  # the plan on screen is about to change
+    app.wait()
+    assert not app.planning and app.plan is not None and str(app.btn_run.cget("state")) == "normal"
+
+
+def test_run_never_uses_a_plan_older_than_the_settings(app, lib, dialogs, slow_build):
+    before = snapshot(lib)
+    app.load_source(str(lib))
+    app.wait()
+    app.var_pattern.set("{artist}/{title}")  # re-plans after 250 ms, then 0.4 s on the worker
+    app._run()
+    app.pump(0.1)
+    app._run()
+    assert not dialogs["shown"] and snapshot(lib) == before  # refused both times, silently
+    app.wait()
+    app._run()
+    app.wait()
+    app.wait()
+    assert (lib / "岡田有希子" / "Beta.mp3").exists()  # the new pattern, not the old one
+
+
+def test_rapid_changes_build_only_the_newest(app, lib, slow_build):
+    app.load_source(str(lib))
+    app.wait()
+    slow_build.clear()
+    for pattern in ("{artist}/{title}", "{album}/{title}", "{year}/{title}", "{genre}/{title}", "{artist} - {title}"):
+        app.var_pattern.set(pattern)
+        app._replan()
+    app.wait()
+    assert slow_build[0] == "{artist}/{title}" and slow_build[-1] == "{artist} - {title}"
+    assert len(slow_build) == 2  # the first one in flight, then the newest; the ones between never ran
+    assert app.plan.options.pattern == "{artist} - {title}"
+
+
+def test_a_plan_for_the_old_folder_is_dropped(app, lib, tmp_path, slow_build):
+    other = tmp_path / "other"
+    put(other, "tone.ogg", "x/1.ogg", title="Solo", artist="Someone", album="Alone", tracknumber="1")
+    app.load_source(str(lib))
+    app.wait()
+    app._replan()  # still building for lib ...
+    assert app.planning and not app.busy  # a folder can be opened while a plan is being built
+    app.load_source(str(other))
+    app.wait()
+    assert app.plan is not None and all(i.src.startswith(str(other)) for i in app.plan.items)
+
+
+def test_example_follows_the_typed_pattern_while_the_plan_is_built(app, lib, slow_build):
+    from scan import key_of
+
+    app.load_source(str(lib))
+    app.wait()
+    app.tree.selection_set(key_of(str(lib / "dl" / "sub" / "b.mp3")))  # not a duplicate
+    app.var_pattern.set("{album}/{title}")
+    app.pump(0.35)  # past the 250 ms wait; the worker is still building
+    assert app.planning
+    assert "Fairy/Beta.mp3" in app.lbl_example.cget("text")  # not the old "…/02 - Beta.mp3"
+    app.wait()
+    assert "Fairy/Beta.mp3" in app.lbl_example.cget("text")

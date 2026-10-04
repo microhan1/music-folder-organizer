@@ -135,11 +135,12 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
     multi = multi_disc_albums(scan.tracks, artist_map)
     claimed: set[str] = set()
     counters: dict[str, int] = {}
+    disk = _Listing()
     for item in items:
         item.keep_name = key_of(item.track.folder) in cue_dirs and item.action not in (DUPE_MOVE, DUPE_TRASH)
         item.multi_disc = album_id(item.track, artist_map) in multi
-        _place(item, scan.root, opts, artist_map, claimed, counters)
-    companions = _companions(items, scan, opts)
+        _place(item, scan.root, opts, artist_map, claimed, counters, disk)
+    companions = _companions(items, scan, opts, disk)
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
     return Plan(opts, items, companions, empty)
 
@@ -198,7 +199,29 @@ def _target(item: Item, root: str, opts: Options, artist_map) -> tuple[list[str]
     return segs[:-1], segs[-1], ext
 
 
-def _place(item: Item, root: str, opts: Options, artist_map, claimed: set[str], counters: dict[str, int]) -> None:
+class _Listing:
+    """os.path.lexists for thousands of targets in a few hundred folders: one
+    directory listing per folder instead of one disk query per file. Names compare
+    with normcase, as Windows does; NFC and NFD stay different names, as on NTFS."""
+
+    def __init__(self) -> None:
+        self._dirs: dict[str, set[str]] = {}
+
+    def lexists(self, path: str) -> bool:
+        folder, name = os.path.split(path)
+        key = os.path.normcase(folder)
+        names = self._dirs.get(key)
+        if names is None:
+            try:
+                names = {os.path.normcase(n) for n in os.listdir(folder)}
+            except OSError:  # no such folder yet (or a file in the way): nothing there
+                names = set()
+            self._dirs[key] = names
+        return os.path.normcase(name) in names
+
+
+def _place(item: Item, root: str, opts: Options, artist_map, claimed: set[str], counters: dict[str, int],
+           disk: "_Listing") -> None:
     dirs, stem, ext = _target(item, root, opts, artist_map)
     base = opts.dest
     if item.action == DUPE_TRASH:
@@ -226,7 +249,7 @@ def _place(item: Item, root: str, opts: Options, artist_map, claimed: set[str], 
         d2, s2, cut = pattern_mod.fit(base, dirs, f"{stem} ({n})", ext)
         dst = os.path.join(base, *d2, s2 + ext)
     own = os.path.normcase(item.src)
-    while target_key(dst) in claimed or (os.path.lexists(dst) and os.path.normcase(dst) != own):
+    while target_key(dst) in claimed or (disk.lexists(dst) and os.path.normcase(dst) != own):
         n += 1
         d2, s2, cut = pattern_mod.fit(base, dirs, f"{stem} ({n})", ext)
         item.truncated = item.truncated or cut
@@ -245,7 +268,7 @@ def _place(item: Item, root: str, opts: Options, artist_map, claimed: set[str], 
 
 
 # ------------------------------------------------------------------ companions
-def _companions(items: list[Item], scan: ScanResult, opts: Options) -> list[Companion]:
+def _companions(items: list[Item], scan: ScanResult, opts: Options, disk: "_Listing") -> list[Companion]:
     out: list[Companion] = []
     taken: set[str] = set()
     by_dir: dict[str, list[Item]] = {}
@@ -255,7 +278,7 @@ def _companions(items: list[Item], scan: ScanResult, opts: Options) -> list[Comp
     def add(src: str, dst: str, op: str, kind: str, owner: str = "") -> None:
         if key_of(src) in taken or target_key(dst) == target_key(src):
             return
-        if target_key(dst) in taken or os.path.lexists(dst):
+        if target_key(dst) in taken or disk.lexists(dst):
             return
         taken.add(key_of(src))
         taken.add(target_key(dst))
@@ -293,7 +316,7 @@ def _companions(items: list[Item], scan: ScanResult, opts: Options) -> list[Comp
             first, *rest = ranked
             add(src, os.path.join(first, name), "move" if everyone_leaves else "copy", "cover")
             for target in rest:
-                _copy_cover(out, taken, src, os.path.join(target, name))
+                _copy_cover(out, taken, src, os.path.join(target, name), disk)
     if opts.move_sidecars:
         for dkey, dir_items in by_dir.items():
             _sidecars(dkey, dir_items, scan, opts, add)
@@ -350,9 +373,9 @@ def _extras_only(dkey: str, scan: ScanResult) -> list[str] | None:
     return out
 
 
-def _copy_cover(out: list[Companion], taken: set[str], src: str, dst: str) -> None:
+def _copy_cover(out: list[Companion], taken: set[str], src: str, dst: str, disk: "_Listing") -> None:
     # several copies of one cover share a source, so they bypass the "source used" check
-    if target_key(dst) in taken or os.path.lexists(dst):
+    if target_key(dst) in taken or disk.lexists(dst):
         return
     taken.add(target_key(dst))
     out.append(Companion(src, dst, "copy", "cover"))

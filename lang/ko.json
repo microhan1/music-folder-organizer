@@ -140,6 +140,7 @@
   "btn_export_untagged": "태그 부족 목록 내보내기",
   "msg_reading": "태그 읽는 중",
   "msg_scanning_short": "폴더 읽는 중…",
+  "msg_planning": "새 경로 계산 중…",
   "msg_hashing": "같은 파일 확인 중",
   "msg_fingerprinting": "소리 지문 만드는 중",
   "msg_moving": "정리 중",

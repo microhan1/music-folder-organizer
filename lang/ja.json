@@ -140,6 +140,7 @@
   "btn_export_untagged": "タグ不足リストを書き出す",
   "msg_reading": "タグを読み込み中",
   "msg_scanning_short": "スキャン中…",
+  "msg_planning": "新しいパスを計算中…",
   "msg_hashing": "ファイルを比較中",
   "msg_fingerprinting": "音の指紋を作成中",
   "msg_moving": "整理中",

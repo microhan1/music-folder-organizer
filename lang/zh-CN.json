@@ -140,6 +140,7 @@
   "btn_export_untagged": "导出标签不全列表",
   "msg_reading": "正在读取标签",
   "msg_scanning_short": "正在扫描…",
+  "msg_planning": "正在计算新路径…",
   "msg_hashing": "正在比较文件",
   "msg_fingerprinting": "正在生成声音指纹",
   "msg_moving": "正在整理",

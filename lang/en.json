@@ -140,6 +140,7 @@
   "btn_export_untagged": "Export missing-tag list",
   "msg_reading": "Reading tags",
   "msg_scanning_short": "Scanning…",
+  "msg_planning": "Working out the new paths…",
   "msg_hashing": "Comparing files",
   "msg_fingerprinting": "Fingerprinting",
   "msg_moving": "Organizing",
