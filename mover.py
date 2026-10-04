@@ -23,7 +23,8 @@ import i18n
 from plan import COPY, DUPE_MOVE, DUPE_TRASH, MOVE, Plan
 from scan import JUNK_NAMES, LOG_NAME, key_of
 
-FLUSH_EVERY = 50
+FLUSH_EVERY = 50  # journal lines between fsyncs
+JOURNAL_SUFFIX = ".journal"
 CHUNK = 1024 * 1024
 ProgressFn = Callable[[int, int], None]
 
@@ -51,18 +52,75 @@ def log_path_for(folder: str) -> str:
     return os.path.join(folder, LOG_NAME)
 
 
-def load_log(path: str) -> dict:
+def journal_path(log_path: str) -> str:
+    return log_path + JOURNAL_SUFFIX
+
+
+def _read_log(path: str) -> tuple[dict, bool]:
+    """(data, broken): broken = the file exists, is not empty, and cannot be read as a log."""
+    empty = {"version": 1, "runs": []}
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+    except FileNotFoundError:
+        return empty, False
     except (OSError, ValueError):
-        return {"version": 1, "runs": []}
+        return empty, _size(path) > 0
     if not isinstance(data, dict) or not isinstance(data.get("runs"), list):
-        return {"version": 1, "runs": []}
+        return empty, True
+    return data, False
+
+
+def _size(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def _merge_journal(path: str, data: dict) -> None:
+    """Steps of a run that never finished (the program stopped mid-run) are only in
+    the journal: put them into that run. Only an open run takes them, so a journal
+    left behind by a finished run can never bring back steps an undo removed."""
+    try:
+        with open(journal_path(path), "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    header, ops = None, []
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            break  # a line cut short when the program stopped: the ones before it count
+        if header is None:
+            header = obj.get("journal") if isinstance(obj, dict) else None
+            if not isinstance(header, dict) or not header.get("id"):
+                return
+        elif isinstance(obj, dict):
+            ops.append(obj)
+    if header is None:
+        return
+    run = next((r for r in data["runs"] if r.get("id") == header["id"]), None)
+    if run is None:  # the log itself lost it (replaced, set aside as broken)
+        run = {**header, "ops": []}
+        data["runs"].append(run)
+    if not run.get("open"):
+        return
+    if len(ops) > len(run.get("ops") or []):
+        run["ops"] = ops
+    run.pop("open", None)
+
+
+def load_log(path: str) -> dict:
+    data, _ = _read_log(path)
+    _merge_journal(path, data)
     return data
 
 
 def save_log(path: str, data: dict) -> None:
+    """Every caller saves what load_log returned, journal steps included, so a
+    journal is no longer needed once this succeeds."""
     tmp = path + ".part"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -71,51 +129,88 @@ def save_log(path: str, data: dict) -> None:
     except BaseException:
         _remove_quietly(tmp)  # a failed save leaves no .part behind
         raise
+    _remove_quietly(journal_path(path))
 
 
 class RunLog:
-    """Written once before the first file moves: when the log cannot be saved
-    the run does not start, so nothing ever moves without a way back."""
+    """organize_log.json is saved before the first file moves: when it cannot be
+    saved the run does not start, so nothing ever moves without a way back.
+
+    During the run each step is appended to organize_log.json.journal (one JSON
+    line, flushed at once) instead of rewriting the whole log; the steps go into
+    organize_log.json when the run ends. If the program stops mid-run, the next
+    load_log takes them from the journal."""
 
     def __init__(self, folder: str, source: str, mode: str) -> None:
         os.makedirs(folder, exist_ok=True)
         self.path = log_path_for(folder)
         self.existed = os.path.exists(self.path)
-        self.data = load_log(self.path)
-        if self.existed and not self.data["runs"] and os.path.getsize(self.path) > 0:
+        self.data, broken = _read_log(self.path)
+        if broken:
             # unreadable: keep it for the user instead of writing over it
             os.replace(self.path, f"{self.path}.broken-{time.strftime('%Y%m%d-%H%M%S')}")
             self.existed = False
+        _merge_journal(self.path, self.data)  # an earlier run that was cut short
         self.run = {"id": uuid.uuid4().hex[:12], "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "source": source, "dest": folder, "mode": mode, "ops": [], "undone": False}
+                    "source": source, "dest": folder, "mode": mode, "ops": [], "undone": False, "open": True}
         self.data["runs"].append(self.run)
         self._pending = 0
+        self._journal = None
         save_log(self.path, self.data)  # raises: the caller stops before touching any file
+        try:
+            self._journal = open(journal_path(self.path), "w", encoding="utf-8")
+            self._write({"journal": {k: v for k, v in self.run.items() if k != "ops"}})
+        except OSError:
+            self.discard()
+            raise
+
+    def _write(self, obj: dict) -> None:
+        try:
+            self._journal.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            self._journal.flush()  # in the OS now: survives the program stopping
+            self._pending += 1
+            if self._pending >= FLUSH_EVERY:  # on the disk now: survives a power cut
+                self._pending = 0
+                os.fsync(self._journal.fileno())
+        except (OSError, ValueError) as exc:  # ValueError: the journal was closed
+            raise LogWriteError(getattr(exc, "errno", None) or errno.EIO, str(exc), journal_path(self.path)) from exc
 
     def add(self, **op) -> None:
+        """Raises LogWriteError; the step stays in memory so flush() can still save it."""
         self.run["ops"].append(op)
-        self._pending += 1
-        if self._pending >= FLUSH_EVERY:
-            self.flush()
+        self._write(op)
+
+    def _close_journal(self) -> None:
+        if self._journal is not None:
+            try:
+                self._journal.close()
+            except OSError:
+                pass  # every line was flushed when written; the final save has them all anyway
+            self._journal = None
 
     def flush(self) -> None:
-        """Raises LogWriteError; the ops stay in memory so a later flush can still save them."""
-        self._pending = 0
+        """End of the run: write every step into organize_log.json and drop the journal.
+        Raises LogWriteError; the journal then stays and the next load_log merges it."""
+        self._close_journal()
+        self.run.pop("open", None)
         try:
             save_log(self.path, self.data)
         except OSError as exc:
+            self.run["open"] = True
             raise LogWriteError(exc.errno, str(exc), self.path) from exc
 
     def discard(self) -> None:
         """Nothing happened: leave the log as it was before this run."""
+        self._close_journal()
         self.data["runs"].remove(self.run)
         try:
             if self.existed:
                 save_log(self.path, self.data)
             else:
                 os.remove(self.path)
+                _remove_quietly(journal_path(self.path))
         except OSError:
-            pass
+            pass  # at worst an empty open run remains, which history and undo skip
 
 
 # ------------------------------------------------------------------ file ops
@@ -366,11 +461,12 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
     finally:
         if log.run["ops"]:
             try:
-                log.flush()  # one more try: everything moved so far is in memory
+                log.flush()  # every step so far is in memory, even one the journal refused
                 if log_stopped:
                     res.failed.append((log.path, i18n.t("err_log_stopped")))
             except LogWriteError:
-                res.failed.append((log.path, i18n.t("err_log_lost")))
+                # the journal still holds every step it took; the next load merges them
+                res.failed.append((log.path, i18n.t("err_log_lost" if log_stopped else "err_log_pending")))
             i18n.update_settings(last_log=log.path)
         else:
             log.discard()

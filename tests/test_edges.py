@@ -268,45 +268,130 @@ def _sixty(tmp_path):
         put(tmp_path, "tone.ogg", f"in/{i:02}.ogg", title=f"T{i}", artist="A", album="B", tracknumber=str(i + 1))
 
 
-def test_log_becomes_unwritable_mid_run_stops(tmp_path):
-    _sixty(tmp_path)
-    log = tmp_path / "organize_log.json"
+def _journal_fails_at(monkeypatch, line):
+    """The journal refuses its ``line``-th line (1 = the header) as a full disk would."""
+    real, calls = mover.RunLog._write, []
 
-    def lock_log(done, total):
-        if done == 1:  # the first save (before any move) went through; now nothing more can be written
-            os.chmod(log, stat.S_IREAD)
+    def write(self, obj):
+        calls.append(obj)
+        if len(calls) == line:
+            raise mover.LogWriteError(28, "No space left on device", mover.journal_path(self.path))
+        real(self, obj)
 
-    try:
-        res = mover.execute(build(tmp_path)[1], progress=lock_log)
-    finally:
-        os.chmod(log, stat.S_IREAD | stat.S_IWRITE)
-    # ops: mkdir A, mkdir A/B, then moves; the 50th op is the first save and it fails -> stop there
-    assert res.cancelled and res.done == mover.FLUSH_EVERY - 2
-    assert len(os.listdir(tmp_path / "in")) == 60 - res.done
-    assert res.failed == [(str(log), i18n.t("err_log_lost"))]
-    assert not (tmp_path / "organize_log.json.part").exists()
+    monkeypatch.setattr(mover.RunLog, "_write", write)
 
 
-def test_log_save_fails_once_then_undo_restores_everything(tmp_path, monkeypatch):
-    _sixty(tmp_path)
-    before = snapshot(tmp_path)
+def _save_fails_after(monkeypatch, ok):
+    """save_log works ``ok`` times, then fails."""
     real, calls = mover.save_log, []
 
-    def flaky(path, data):
+    def save(path, data):
         calls.append(path)
-        if len(calls) == 2:  # the first mid-run save
+        if len(calls) > ok:
             raise PermissionError(13, "locked by another program", path)
         real(path, data)
 
-    monkeypatch.setattr(mover, "save_log", flaky)
+    monkeypatch.setattr(mover, "save_log", save)
+    return real
+
+
+def test_log_is_saved_twice_per_run_not_every_50_steps(tmp_path, monkeypatch):
+    _sixty(tmp_path)
+    real, calls = mover.save_log, []
+    monkeypatch.setattr(mover, "save_log", lambda p, d: (calls.append(p), real(p, d)))
     res = mover.execute(build(tmp_path)[1])
-    assert res.cancelled and res.done == mover.FLUSH_EVERY - 2
-    assert res.failed == [(res.log_path, i18n.t("err_log_stopped"))]  # the last save worked
-    monkeypatch.setattr(mover, "save_log", real)
+    assert res.done == 60 and not res.failed and len(calls) == 2  # before the first move, after the last
+    assert not os.path.exists(mover.journal_path(res.log_path))
+    run = undo.runs_in([res.log_path])[0]
+    assert (run.count("mkdir"), run.count("move"), run.count("rmdir")) == (2, 60, 1)  # A, A/B; in
+
+
+def test_journal_fails_mid_run_stops(tmp_path, monkeypatch):
+    _sixty(tmp_path)
+    before = snapshot(tmp_path)
+    _journal_fails_at(monkeypatch, 31)  # header, mkdir A, mkdir A/B, then the 28th move
+    res = mover.execute(build(tmp_path)[1])
+    assert res.cancelled and res.done == 28  # the 28th file had moved when its line was refused
+    assert len(os.listdir(tmp_path / "in")) == 60 - 28
+    assert res.failed == [(res.log_path, i18n.t("err_log_stopped"))]  # the final save has all 28
     u = undo.undo(res.log_path)
-    assert u.restored == res.done and not u.skipped
+    assert u.restored == 28 and not u.skipped
     os.remove(res.log_path)
     assert snapshot(tmp_path) == before
+
+
+def test_journal_and_final_save_both_fail(tmp_path, monkeypatch):
+    _sixty(tmp_path)
+    _journal_fails_at(monkeypatch, 31)
+    real = _save_fails_after(monkeypatch, 1)
+    res = mover.execute(build(tmp_path)[1])
+    assert res.cancelled and res.done == 28
+    assert res.failed == [(res.log_path, i18n.t("err_log_lost"))]
+    assert not (tmp_path / "organize_log.json.part").exists()
+    monkeypatch.setattr(mover, "save_log", real)
+    u = undo.undo(res.log_path)  # the journal had 27 of the 28 moves
+    assert u.restored == 27 and not u.skipped
+
+
+def test_final_save_fails_and_the_journal_is_merged_later(tmp_path, monkeypatch):
+    _sixty(tmp_path)
+    before = snapshot(tmp_path)
+    real = _save_fails_after(monkeypatch, 1)
+    res = mover.execute(build(tmp_path)[1])
+    assert res.done == 60 and not res.cancelled
+    assert res.failed == [(res.log_path, i18n.t("err_log_pending"))]
+    assert os.path.exists(mover.journal_path(res.log_path))
+    monkeypatch.setattr(mover, "save_log", real)
+    assert undo.runs_in([res.log_path])[0].files == 60  # history reads through the journal
+    u = undo.undo(res.log_path)
+    assert u.restored == 60 and not u.skipped
+    assert not os.path.exists(mover.journal_path(res.log_path))  # merged, then dropped
+    os.remove(res.log_path)
+    assert snapshot(tmp_path) == before
+
+
+def test_program_stops_mid_run_then_undo_restores(tmp_path):
+    """A real stop (os._exit, no finally): only the journal knows the moves."""
+    import subprocess
+    import sys
+
+    lib = tmp_path / "lib"
+    _sixty(lib)
+    before = snapshot(lib)
+    tests = os.path.dirname(os.path.abspath(__file__))
+    script = (
+        "import os, sys\n"
+        f"sys.path[:0] = [{os.path.dirname(tests)!r}, {tests!r}]\n"
+        "import i18n, mover\n"
+        f"i18n._settings_path = {str(tmp_path / 'settings.json')!r}\n"
+        "from conftest import build\n"
+        f"p = build({str(lib)!r}, artists={str(tmp_path / 'artists.json')!r})[1]\n"
+        "mover.execute(p, progress=lambda d, n: os._exit(3) if d == 30 else None)\n"
+    )
+    assert subprocess.run([sys.executable, "-c", script], timeout=120).returncode == 3
+    log = str(lib / "organize_log.json")
+    assert os.path.exists(mover.journal_path(log))
+    moved = 60 - len(os.listdir(lib / "in"))
+    assert moved == 30
+    run = undo.runs_in([log])[0]
+    assert run.files == 30 and run.can_undo
+    u = undo.undo(log)
+    assert u.restored == 30 and not u.skipped
+    os.remove(log)
+    assert snapshot(lib) == before
+
+
+def test_a_finished_run_ignores_a_leftover_journal(tmp_path):
+    _sixty(tmp_path)
+    res = mover.execute(build(tmp_path)[1])
+    run = undo.runs_in([res.log_path])[0]
+    with open(mover.journal_path(res.log_path), "w", encoding="utf-8") as f:  # e.g. its delete failed
+        f.write(json.dumps({"journal": {"id": run.id}}) + "\n")
+        for _ in range(100):
+            f.write(json.dumps({"op": "move", "src": "x", "dst": "y"}) + "\n")
+    assert len(undo.runs_in([res.log_path])[0].ops) == len(run.ops)
+    u = undo.undo(res.log_path)
+    assert u.restored == 60 and not u.skipped
 
 
 def test_undo_with_unwritable_log_puts_nothing_back(tmp_path):
