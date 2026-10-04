@@ -33,5 +33,6 @@ PRD와 결정 사항: [docs/PRD.md](docs/PRD.md). 실제로 있었던 문제와 
 - 백슬래시·정규식이 든 수정은 heredoc 치환 대신 Edit 도구로.
 - 빌드: PowerShell에서 `build.bat`을 절대 경로로. 먼저 `Get-Process music-folder-organizer`로 사용자가 앱을 켜 뒀는지 확인하고, 켜져 있으면 끄지 말고 `--distpath build\dist-new`로 빌드.
 - `dist\settings.json`은 사용자의 되돌리기 경로(`last_log`)를 담고 있으니 지우지 않는다.
+- 릴리스 노트는 `docs/releases/vX.Y.Z.md`에 쓰고 커밋한 뒤 `gh release create --notes-file`로 올린다. 릴리스 빌드에서 PyInstaller를 직접 부르면 자료 경로는 절대 경로로(LESSONS D14), 끝나면 `build/`의 중간 산출물(work·spec·로그·exe 사본)을 지운다. `build/dist-settings.backup.json`과 스크린샷용 `build/demo`는 남긴다.
 - 저장소에서 `python main.py`를 돌린 뒤 생긴 `settings.json`은 삭제한다.
 - 테스트에서 Tk는 모듈당 하나만 만든다.
