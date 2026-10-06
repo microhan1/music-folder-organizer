@@ -75,7 +75,7 @@ Empty values become fallback names such as "Unknown Artist" and "Unknown Album" 
 | 2. Same song | same artist + title, lengths within 2 s |
 | 3. Sound | acoustic fingerprints (Chromaprint, compared locally); finds the same recording even with different tags |
 
-**Only extra copies within an album go.** A song that is on several albums (an original album and a best-of) is shown as one group but **keeps one file per album** (the group name says "n albums"). Within an album the lossless (flac) file wins, then the higher bitrate, then the one already in place. Change it with **Keep**, or untick **Apply** to leave a whole group alone. On the command line, `--dedupe-across-albums` keeps only one copy even across albums.
+**Only extra copies within an album go.** A song that is on several albums (an original album and a best-of) is shown as one group but **keeps one file per album** (the group name says "n albums"). Within an album the lossless (flac) file wins, then the higher bitrate, then the one already in place. Change it with **Keep**, or untick **Apply** to leave a whole group alone. On the command line, `--dedupe-across-albums` keeps only one copy even across albums. The Duplicates tab lists only groups with copies to clear; **Show all** adds the ones where every album keeps its copy.
 
 The others are not deleted; they move to the `_Duplicates` folder. The recycle bin is an option, but files sent there do not come back with this tool's Undo.
 
