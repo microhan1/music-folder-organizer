@@ -52,6 +52,13 @@ class DupeGroup:
     def cross_album(self) -> bool:
         return self.albums > 1
 
+    @property
+    def has_extras(self) -> bool:
+        """More files than albums: the one-per-album recommendation sends some away. A song
+        that is only on several albums (an album and a best-of) has none. Fixed by the
+        recommendation, so ticking Keep never makes a group appear or vanish."""
+        return len(self.members) > self.albums
+
     def removable(self) -> list[Track]:
         return [t for t in self.members if key_of(t.path) not in self.keep]
 

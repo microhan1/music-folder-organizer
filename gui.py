@@ -199,6 +199,7 @@ class App:
         self.var_untagged = tk.BooleanVar(value=self.prefs.include_untagged)
         self.var_sidecars = tk.BooleanVar(value=self.prefs.move_sidecars)
         self.var_fp = tk.BooleanVar(value=False)
+        self.var_dupes_all = tk.BooleanVar(value=False)  # duplicates tab: also groups where every file stays
         self.var_dupes_action = tk.StringVar(value=self.prefs.dupes_action)
         self.var_pref = tk.StringVar(value=self.prefs.artist_name_preference)
         self.var_lang = tk.StringVar(value=i18n.LANG_NAMES[i18n.current_lang()])
@@ -541,8 +542,14 @@ class App:
         ttk.Radiobutton(bar, text=t("opt_dupes_move", folder=self.prefs.dupes_name()), value="move",
                         variable=self.var_dupes_action, style="Seg.Toolbutton", command=self._options_changed).pack(side="right")
         hint = ttk.Label(tab, text=t("dupes_hint"), style="Small.TLabel", justify="left")
-        hint.pack(fill="x", pady=(0, 10))
+        hint.pack(fill="x", pady=(0, 6))
         self._wrap(hint)
+        shown = ttk.Frame(tab)
+        shown.pack(fill="x", pady=(0, 8))
+        # the fixed-size chip first, then the stretching label (LESSONS A15/A18)
+        self._chip(shown, "opt_dupes_show_all", self.var_dupes_all, self._fill_dupes).pack(side="right")
+        self.lbl_dupes_shown = ttk.Label(shown, text="", style="Muted.TLabel")
+        self.lbl_dupes_shown.pack(side="left", fill="x", expand=True)
         cols = ("apply", "keep", "path", "format", "bitrate", "length")
         box = self._table_box(tab)
         tree = ttk.Treeview(box, columns=cols, show="tree headings", selectmode="browse")
@@ -886,9 +893,20 @@ class App:
         return rows()
 
     def _fill_dupes(self) -> None:
+        """Only groups with something to send away, unless "show all": on a real library
+        most groups are a song on an album and a best-of, where every file stays (61 → 9)."""
         tree = self.dtree
         tree.delete(*tree.get_children())
-        for g in self.groups:
+        show = self.groups if self.var_dupes_all.get() else [g for g in self.groups if g.has_extras]
+        hidden = len(self.groups) - len(show)
+        if hidden:
+            text = t("dupes_shown_some", shown=len(show), hidden=hidden)
+        elif self.groups:
+            text = t("dupes_shown_all", count=len(self.groups))
+        else:
+            text = ""
+        self.lbl_dupes_shown.configure(text=text)
+        for g in show:
             label = t("dupe_group", n=g.id, stage=t(f"stage_{g.stage}"), count=len(g.members))
             if g.cross_album:
                 label += " · " + t("dupe_cross", count=g.albums)

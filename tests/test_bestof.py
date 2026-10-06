@@ -35,6 +35,18 @@ def test_only_cross_album_copies_remove_nothing():
     assert g.cross_album and g.removable() == []
 
 
+def test_has_extras_follows_the_recommendation_not_the_ticks():
+    only_two_albums = dedupe.find([tr("C:\\orig\\a.mp3", 1, "Fairy"), tr("C:\\best\\09.mp3", 2, "Best")])[0]
+    assert not only_two_albums.has_extras
+    same_album = dedupe.find([tr("C:\\orig\\a.mp3", 1, "Fairy"), tr("C:\\dl\\a.mp3", 2, "Fairy")])[0]
+    assert same_album.has_extras
+    mixed = dedupe.find([tr("C:\\orig\\a.mp3", 1, "Fairy"), tr("C:\\dl\\a.mp3", 2, "Fairy"),
+                         tr("C:\\best\\09.mp3", 3, "Best")])[0]
+    assert mixed.has_extras and mixed.albums == 2
+    mixed.keep = {key_of(t.path) for t in mixed.members}  # the user keeps everything
+    assert mixed.has_extras  # still listed: a group never vanishes under the user's click
+
+
 def test_album_names_compare_normalized_and_missing_albums_match():
     ts = [tr("C:\\x\\a.mp3", 1, "FAIRY"), tr("C:\\y\\b.mp3", 2, "Fairy ")]
     assert not dedupe.find(ts)[0].cross_album

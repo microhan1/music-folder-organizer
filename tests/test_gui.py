@@ -770,3 +770,29 @@ def test_window_size_grows_with_the_screen_scaling(root, monkeypatch):
     monkeypatch.setattr(root, "winfo_screenheight", lambda: 900)
     w, h, min_w, min_h = window_size(root)
     assert w <= 1600 and h <= 900 - 135 and min_w <= 1600 and min_h <= 900 - 135
+
+
+# ------------------------------------------------------------------ v0.4.0 item 4: duplicates tab shows what needs clearing
+def test_dupes_tab_hides_groups_where_every_album_keeps_its_copy(app, lib):
+    from scan import key_of
+
+    put(lib, "tone.ogg", "orig/s.ogg", title="Sweet", artist="Someone", album="Original", tracknumber="1")
+    put(lib, "tone.ogg", "best/s.ogg", title="Sweet", artist="Someone", album="Best Of", tracknumber="9")
+    app.load_source(str(lib))
+    app.wait()
+    cross = [g for g in app.groups if not g.has_extras]
+    shown = [r for r in app.dtree.get_children()]
+    assert cross and all(f"g{g.id}" not in shown for g in cross)
+    assert len(shown) == len(app.groups) - len(cross)
+    assert str(len(cross)) in app.lbl_dupes_shown.cget("text") and "hidden" in app.lbl_dupes_shown.cget("text")
+    app.var_dupes_all.set(True)
+    app._fill_dupes()
+    assert len(app.dtree.get_children()) == len(app.groups)
+    assert app.lbl_dupes_shown.cget("text") == f"All {len(app.groups)} groups shown"
+    app.var_dupes_all.set(False)
+    app._fill_dupes()
+    first = next(g for g in app.groups if g.has_extras)
+    first.keep = {key_of(m.path) for m in first.members}  # keep everything: the group stays listed
+    app._replan()
+    app.wait()
+    assert f"g{first.id}" in app.dtree.get_children()
