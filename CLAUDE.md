@@ -12,6 +12,8 @@ PRD와 결정 사항: [docs/PRD.md](docs/PRD.md). 실제로 있었던 문제와 
 ## 코드 규칙
 
 - 되돌리기 수단(로그)이 저장되기 전에는 어떤 파일도 옮기지 않는다. 처음뿐 아니라 실행 중 journal 쓰기(`RunLog.add`)도 실패하면 `LogWriteError`로 멈춘다. 로그를 읽는 곳은 모두 `mover.load_log`(journal을 합침), 저장은 `load_log`가 준 데이터로만 `save_log`(성공하면 journal을 지움). 되돌리기도 시작 전에 로그가 써지는지 확인한다. 저장 실패를 `except OSError: pass`로 삼키지 않는다(LESSONS A1·A21).
+- 파일을 여는·나열하는·옮기는·지우는 모든 곳은 `longpath.fs()`를 거치고 폴더 걷기는 `longpath.walk()`를 쓴다(`os.walk`는 긴 경로를 조용히 건너뜀). `os.path.isfile`·`exists`·`getsize`와 외부 프로그램(fpcalc)에 넘기는 경로도 포함. `longpath.py`는 photo-organizer와 같은 파일이니 고치면 양쪽에. 기록·화면의 경로는 일반 형태(LESSONS A24).
+- 정크 파일 판정은 `scan.is_junk`(맥의 `._*` 포함) 한 곳만 쓴다(A25). 창·여백 같은 픽셀 크기는 화면 배율을 거친다(`gui.window_size`, A26).
 - 기존 경로의 식별은 `scan.key_of`(대소문자 무시), 새 이름 충돌은 `scan.target_key`(NFC 포함). 둘을 섞지 않는다.
 - 충돌 번호가 붙는 기능을 바꾸면 재실행(멱등성) 테스트를 함께 돌린다.
 - GUI worker 스레드 안에서는 위젯과 tk 변수를 건드리지 않는다.

@@ -754,3 +754,19 @@ def test_rescan_after_run_and_undo_opens_no_file(app, lib, dialogs, monkeypatch)
     app.wait()
     assert len(app.scan.tracks) == n  # back, duplicates included
     assert opened == [] and app.tag_cache.hits == n
+
+
+def test_window_size_grows_with_the_screen_scaling(root, monkeypatch):
+    """At 150 % scaling (144 dpi) the window is 1.5x bigger, never bigger than the screen."""
+    from gui import window_size
+
+    monkeypatch.setattr(root, "winfo_screenwidth", lambda: 3840)
+    monkeypatch.setattr(root, "winfo_screenheight", lambda: 2160)
+    monkeypatch.setattr(root, "winfo_fpixels", lambda _u: 96.0)
+    assert window_size(root) == (1280, 1000, 1000, 840)
+    monkeypatch.setattr(root, "winfo_fpixels", lambda _u: 144.0)
+    assert window_size(root) == (1920, 1500, 1500, 1260)
+    monkeypatch.setattr(root, "winfo_screenwidth", lambda: 1600)  # a small screen: nothing exceeds it
+    monkeypatch.setattr(root, "winfo_screenheight", lambda: 900)
+    w, h, min_w, min_h = window_size(root)
+    assert w <= 1600 and h <= 900 - 135 and min_w <= 1600 and min_h <= 900 - 135

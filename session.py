@@ -7,6 +7,7 @@ import os
 import i18n
 import plan as plan_mod
 from artists import ArtistIndex, folder_key, load_aliases
+from longpath import fs, walk
 from mover import key_in
 from prefs import Prefs
 from scan import ScanResult, Track, key_of
@@ -33,9 +34,9 @@ def existing_folders(scan: ScanResult | None, dest: str | None = None, depth: in
     """Names (folder_key) of folders already on disk in the source and, when it lies
     elsewhere, the first levels of the destination."""
     names = {folder_key(os.path.basename(info.path)) for info in scan.dirs.values()} if scan else set()
-    if dest and os.path.isdir(dest) and not (scan and key_in(dest, scan.root)):
+    if dest and os.path.isdir(fs(dest)) and not (scan and key_in(dest, scan.root)):
         base = os.path.abspath(dest).rstrip(os.sep).count(os.sep)
-        for here, subdirs, _ in os.walk(dest):
+        for here, subdirs, _ in walk(dest):
             names.update(folder_key(d) for d in subdirs)
             if here.rstrip(os.sep).count(os.sep) - base >= depth - 1:
                 subdirs[:] = []

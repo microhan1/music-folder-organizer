@@ -13,8 +13,9 @@ from collections import Counter
 import pattern as pattern_mod
 from artists import ArtistIndex
 from dedupe import DupeGroup
-from scan import (COVER_NAMES, JUNK_NAMES, LRC_EXT, SIDECAR_EXTS, TAGBAK_SUFFIX, ScanResult, Track, format_of,
-                  key_of, target_key)
+from longpath import fs
+from scan import (COVER_NAMES, LRC_EXT, SIDECAR_EXTS, TAGBAK_SUFFIX, ScanResult, Track, format_of,
+                  is_junk, key_of, target_key)
 
 # item status
 OK, SAME, UNTAGGED, DUP, CONFLICT = "ok", "same", "untagged", "dup", "conflict"
@@ -213,7 +214,7 @@ class _Listing:
         names = self._dirs.get(key)
         if names is None:
             try:
-                names = {os.path.normcase(n) for n in os.listdir(folder)}
+                names = {os.path.normcase(n) for n in os.listdir(fs(folder))}
             except OSError:  # no such folder yet (or a file in the way): nothing there
                 names = set()
             self._dirs[key] = names
@@ -341,7 +342,7 @@ def _sidecars(dkey: str, dir_items: list[Item], scan: ScanResult, opts: Options,
     owner = "dir:" + dkey
     for name in info.files:
         low = name.lower()
-        if format_of(name) or low in JUNK_NAMES or low in COVER_NAMES:
+        if format_of(name) or is_junk(name) or low in COVER_NAMES:
             continue  # music, junk and covers have their own rules
         if os.path.splitext(low)[1] in SIDECAR_EXTS:
             add(os.path.join(info.path, name), os.path.join(target, name), op, "sidecar", owner)
@@ -360,7 +361,7 @@ def _extras_only(dkey: str, scan: ScanResult) -> list[str] | None:
     out = []
     for name in info.files:
         low = name.lower()
-        if low in JUNK_NAMES:
+        if is_junk(name):
             continue
         if format_of(name) or os.path.splitext(low)[1] not in SIDECAR_EXTS:
             return None
@@ -407,7 +408,7 @@ def _empty_dirs(items: list[Item], companions: list[Companion], scan: ScanResult
         if dkey in keep:
             empty[dkey] = False
             continue
-        files_ok = all(name.lower() in JUNK_NAMES or key_of(os.path.join(info.path, name)) in leaving for name in info.files)
+        files_ok = all(is_junk(name) or key_of(os.path.join(info.path, name)) in leaving for name in info.files)
         subs_ok = all(empty.get(key_of(os.path.join(info.path, s)), False) for s in info.subdirs)
         empty[dkey] = files_ok and subs_ok
     return [scan.dirs[k].path for k in sorted(empty, key=lambda k: (-k.count(os.sep), k)) if empty[k]]

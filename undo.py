@@ -16,7 +16,14 @@ from typing import Callable
 
 import i18n
 import mover
+from longpath import fs
 from scan import LOG_NAME, key_of
+
+
+def log_exists(path: str | None) -> bool:
+    """os.path.isfile that also sees a log in a folder deeper than 260 characters
+    (plain isfile just says False there, and undo would find nothing to undo)."""
+    return bool(path) and os.path.isfile(fs(path))
 
 
 @dataclasses.dataclass
@@ -66,7 +73,7 @@ def runs_in(logs: list[str | None]) -> list[RunInfo]:
     seen: set[str] = set()
     out: list[RunInfo] = []
     for log in logs:
-        if not log or not os.path.isfile(log) or key_of(log) in seen:
+        if not log or not log_exists(log) or key_of(log) in seen:
             continue
         seen.add(key_of(log))
         for i, run in enumerate(mover.load_log(log).get("runs", [])):
@@ -97,10 +104,10 @@ def find_log(folder: str) -> str | None:
     """organize_log.json in ``folder``; else the last log from settings when its
     run started from or went to that folder."""
     here = os.path.join(folder, LOG_NAME)
-    if os.path.isfile(here):
+    if log_exists(here):
         return here
     last = i18n.load_settings().get("last_log")
-    if isinstance(last, str) and os.path.isfile(last):
+    if isinstance(last, str) and log_exists(last):
         for run in mover.load_log(last).get("runs", []):
             if key_of(folder) in (key_of(run.get("source", "")), key_of(run.get("dest", ""))):
                 return last
@@ -111,9 +118,9 @@ def candidate_logs(*folders: str | None) -> list[str]:
     """Logs that may hold runs for these folders: each folder's own log, and the
     last log from settings when one of its runs started from or went to them."""
     out = [os.path.join(f, LOG_NAME) for f in folders if f]
-    out = [p for p in out if os.path.isfile(p)]
+    out = [p for p in out if log_exists(p)]
     last = i18n.load_settings().get("last_log")
-    if isinstance(last, str) and os.path.isfile(last):
+    if isinstance(last, str) and log_exists(last):
         keys = {key_of(f) for f in folders if f}
         if any(key_of(r.get("source", "")) in keys or key_of(r.get("dest", "")) in keys
                for r in mover.load_log(last).get("runs", [])):
@@ -137,7 +144,7 @@ def undo(log_path: str | None, progress: Callable[[int, int], None] | None = Non
     """Undo ``run_id`` (default: the newest run not undone). ``other_logs`` are
     searched too for newer runs that would block it."""
     res = UndoResult()
-    if not log_path or not os.path.isfile(log_path):
+    if not log_path or not log_exists(log_path):
         res.nothing = True
         return res
     data = mover.load_log(log_path)
@@ -175,7 +182,7 @@ def undo(log_path: str | None, progress: Callable[[int, int], None] | None = Non
             elif kind == "trash":
                 res.trashed.append(op["src"])
             elif kind == "rmdir":
-                os.makedirs(op["path"], exist_ok=True)
+                os.makedirs(mover.fs(op["path"]), exist_ok=True)
             elif kind == "mkdir":
                 mover.remove_junk_folder(op["path"])
         except (OSError, KeyError) as exc:
@@ -195,13 +202,13 @@ def undo(log_path: str | None, progress: Callable[[int, int], None] | None = Non
 
 
 def _undo_move(src: str, dst: str, res: UndoResult) -> None:
-    if not os.path.lexists(dst):
+    if not os.path.lexists(mover.fs(dst)):
         res.skipped.append((src, i18n.t("err_missing")))
         return
-    if os.path.lexists(src) and os.path.normcase(src) != os.path.normcase(dst):
+    if os.path.lexists(mover.fs(src)) and os.path.normcase(src) != os.path.normcase(dst):
         res.skipped.append((src, i18n.t("err_original_taken")))
         return
-    os.makedirs(os.path.dirname(src), exist_ok=True)
+    os.makedirs(mover.fs(os.path.dirname(src)), exist_ok=True)
     mover.move_file(dst, src)
     res.restored += 1
 
@@ -209,7 +216,7 @@ def _undo_move(src: str, dst: str, res: UndoResult) -> None:
 def _undo_copy(op: dict, res: UndoResult) -> None:
     dst = op["dst"]
     try:
-        st = os.stat(dst)
+        st = os.stat(mover.fs(dst))
     except FileNotFoundError:
         return  # already gone
     if st.st_size != op.get("size") or st.st_mtime_ns != op.get("mtime_ns"):

@@ -24,6 +24,7 @@ from typing import Callable
 
 import i18n
 from artists import normalize, normalize_text
+from longpath import fs
 from scan import Track, key_of
 
 LENGTH_TOLERANCE = 2.0
@@ -82,7 +83,7 @@ def find_fpcalc(configured: str = "") -> str | None:
 
 def sha1_file(path: str, cancel: threading.Event | None = None) -> str:
     h = hashlib.sha1()
-    with open(path, "rb") as f:
+    with open(fs(path), "rb") as f:
         while chunk := f.read(CHUNK):
             if cancel is not None and cancel.is_set():
                 raise InterruptedError
@@ -239,7 +240,8 @@ def _fingerprints(exe: str, tracks: list[Track], progress: ProgressFn | None,
             out[key_of(t.path)] = t.fingerprint
     done = len(known)
     with concurrent.futures.ThreadPoolExecutor(fp_workers()) as pool:
-        futures = {pool.submit(run_fpcalc, exe, t.path): t for t in todo if t.fingerprint is None}
+        # fpcalc takes the \\?\ form too (checked), which it needs where long paths are off
+        futures = {pool.submit(run_fpcalc, exe, fs(t.path)): t for t in todo if t.fingerprint is None}
         for fut in concurrent.futures.as_completed(futures):
             if cancel is not None and cancel.is_set():
                 for f in futures:

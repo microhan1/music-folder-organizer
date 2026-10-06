@@ -13,19 +13,27 @@ from typing import Callable
 
 import mutagen
 
+from longpath import fs, walk
+
 AUDIO_EXTS = (".mp3", ".flac", ".m4a", ".ogg", ".wav", ".wma")
 LOSSLESS_FORMATS = {"FLAC", "WAV"}
 LRC_EXT = ".lrc"
 TAGBAK_SUFFIX = ".tagbak.json"  # music-tag-filler's per-file backup
 COVER_NAMES = {f"{stem}{ext}" for stem in ("cover", "folder", "front") for ext in (".jpg", ".jpeg", ".png")}
 JUNK_NAMES = {"thumbs.db", ".ds_store", "desktop.ini", "ehthumbs.db"}
-
 LOG_NAME = "organize_log.json"
 # album extras that may follow a whole album to its new folder (anything else stays put)
 SIDECAR_EXTS = {".cue", ".log", ".txt", ".nfo", ".m3u", ".m3u8", ".pdf", ".accurip", ".sfv", ".md5", ".ffp",
                 ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
 CUE_MAX_BYTES = 1024 * 1024
 _CUE_FILE = re.compile(r'^\s*FILE\s+(?:"([^"]+)"|(\S+))', re.IGNORECASE | re.MULTILINE)
+
+
+def is_junk(name: str) -> bool:
+    """System clutter that never counts as content, including macOS "._name" resource-fork
+    files that come along when a folder is copied from a Mac."""
+    low = name.lower()
+    return low in JUNK_NAMES or low.startswith("._")
 
 
 @dataclasses.dataclass
@@ -152,7 +160,7 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
     skip = {key_of(p) for p in (exclude or [])}
     dirs: dict[str, DirInfo] = {}
     audio: list[str] = []
-    for here, subdirs, files in os.walk(root):
+    for here, subdirs, files in walk(root):  # reaches folders deeper than 260 characters
         if cancel is not None and cancel.is_set():
             return ScanResult(root, [], dirs, cancelled=True)
         subdirs[:] = sorted(d for d in subdirs if key_of(os.path.join(here, d)) not in skip)
@@ -162,7 +170,7 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
             if f.lower().endswith(".cue"):
                 info.cue_refs |= cue_refs(os.path.join(here, f))
         dirs[key_of(here)] = info
-        audio.extend(os.path.join(here, f) for f in files if format_of(f))
+        audio.extend(os.path.join(here, f) for f in files if format_of(f) and not is_junk(f))
     tracks: list[Track] = []
     total = len(audio)
     seen: dict[tuple, tuple[int, int, Track]] = {}
@@ -171,7 +179,7 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
         if cancel is not None and cancel.is_set():
             return ScanResult(root, tracks, dirs, cancelled=True)  # the cache stays as it was
         try:
-            st = os.stat(path)
+            st = os.stat(fs(path))
         except OSError:
             st = None
         track = cache.get(path, st) if (cache is not None and st is not None) else None
@@ -193,9 +201,9 @@ def cue_refs(path: str) -> set[str]:
     """Lower-case base names of the files a cue sheet points at (its FILE lines).
     Read only; cue sheets come in UTF-8, Shift-JIS, CP949 and Latin-1."""
     try:
-        if os.path.getsize(path) > CUE_MAX_BYTES:
+        if os.path.getsize(fs(path)) > CUE_MAX_BYTES:
             return set()
-        with open(path, "rb") as f:
+        with open(fs(path), "rb") as f:  # unread, a cue album's files would be renamed and the sheet broken
             raw = f.read()
     except OSError:
         return set()
@@ -217,7 +225,7 @@ def cue_refs(path: str) -> set[str]:
 def read_track(path: str, st: os.stat_result | None = None) -> Track:
     fmt = format_of(path) or ""
     try:
-        size = (st or os.stat(path)).st_size
+        size = (st or os.stat(fs(path))).st_size
     except OSError:
         size = 0
     track = Track(os.path.abspath(path), fmt, size)
@@ -244,6 +252,7 @@ def read_track(path: str, st: os.stat_result | None = None) -> Track:
 
 
 def _open(path: str, fmt: str):
+    path = fs(path)
     if fmt == "MP3":
         from mutagen.mp3 import MP3
         return MP3(path)

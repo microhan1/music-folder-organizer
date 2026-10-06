@@ -97,6 +97,19 @@ def _enable_dpi_awareness() -> None:
         pass
 
 
+def window_size(root: tk.Misc) -> tuple[int, int, int, int]:
+    """(width, height, min width, min height) in screen pixels. The design sizes are for 96 dpi;
+    a DPI-aware window on a 150 % screen has 144 pixels per inch, where fonts grow but a fixed
+    1280x1000 window would shrink to two thirds of its intended size and the options would not
+    fit (photo-organizer LESSONS A5). Tall as the screen allows (the table gets the extra room),
+    never taller; below ~840 design px the duplicates table has no rows left."""
+    scale = max(1.0, root.winfo_fpixels("1i") / 96.0)
+    screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight() - round(90 * scale)
+    height = max(round(700 * scale), min(round(1000 * scale), screen_h))
+    return (min(round(1280 * scale), screen_w), min(height, screen_h),
+            min(round(1000 * scale), screen_w), min(round(840 * scale), screen_h))
+
+
 def _fmt_length(seconds: float) -> str:
     if not seconds:
         return "-"
@@ -190,11 +203,9 @@ class App:
         self.var_pref = tk.StringVar(value=self.prefs.artist_name_preference)
         self.var_lang = tk.StringVar(value=i18n.LANG_NAMES[i18n.current_lang()])
         root.configure(bg=BG)
-        # as tall as the screen allows (the table gets the extra room), never taller
-        screen_h = root.winfo_screenheight() - 90
-        height = max(700, min(1000, screen_h))
-        root.geometry(f"1280x{height}")
-        root.minsize(1000, min(840, screen_h))  # below ~840 px the duplicates table has no rows left
+        width, height, min_w, min_h = window_size(root)
+        root.geometry(f"{width}x{height}")
+        root.minsize(min_w, min_h)
         self._icon = self._icon_big = None
         icon = os.path.join(i18n.resource_dir(), "assets", "icon.png")
         if os.path.exists(icon):
@@ -1132,7 +1143,7 @@ class App:
         last = i18n.load_settings().get("last_log")
         if isinstance(last, str) and last:
             logs.append(last)
-        return [p for p in dict.fromkeys(logs) if p and os.path.isfile(p)]
+        return [p for p in dict.fromkeys(logs) if p and undo_mod.log_exists(p)]
 
     def _undo(self) -> None:
         """Undo the newest run that can be undone, after a confirmation."""

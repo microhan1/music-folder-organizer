@@ -21,7 +21,8 @@ from typing import Callable
 
 import i18n
 from plan import COPY, DUPE_MOVE, DUPE_TRASH, MOVE, Plan
-from scan import JUNK_NAMES, LOG_NAME, key_of
+from longpath import fs
+from scan import LOG_NAME, is_junk, key_of
 
 FLUSH_EVERY = 50  # journal lines between fsyncs
 JOURNAL_SUFFIX = ".journal"
@@ -60,7 +61,7 @@ def _read_log(path: str) -> tuple[dict, bool]:
     """(data, broken): broken = the file exists, is not empty, and cannot be read as a log."""
     empty = {"version": 1, "runs": []}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(fs(path), "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         return empty, False
@@ -73,7 +74,7 @@ def _read_log(path: str) -> tuple[dict, bool]:
 
 def _size(path: str) -> int:
     try:
-        return os.path.getsize(path)
+        return os.path.getsize(fs(path))
     except OSError:
         return 0
 
@@ -83,7 +84,7 @@ def _merge_journal(path: str, data: dict) -> None:
     the journal: put them into that run. Only an open run takes them, so a journal
     left behind by a finished run can never bring back steps an undo removed."""
     try:
-        with open(journal_path(path), "r", encoding="utf-8") as f:
+        with open(fs(journal_path(path)), "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
         return
@@ -123,9 +124,9 @@ def save_log(path: str, data: dict) -> None:
     journal is no longer needed once this succeeds."""
     tmp = path + ".part"
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(fs(tmp), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, path)
+        os.replace(fs(tmp), fs(path))
     except BaseException:
         _remove_quietly(tmp)  # a failed save leaves no .part behind
         raise
@@ -142,13 +143,13 @@ class RunLog:
     load_log takes them from the journal."""
 
     def __init__(self, folder: str, source: str, mode: str) -> None:
-        os.makedirs(folder, exist_ok=True)
+        os.makedirs(fs(folder), exist_ok=True)
         self.path = log_path_for(folder)
-        self.existed = os.path.exists(self.path)
+        self.existed = os.path.exists(fs(self.path))
         self.data, broken = _read_log(self.path)
         if broken:
             # unreadable: keep it for the user instead of writing over it
-            os.replace(self.path, f"{self.path}.broken-{time.strftime('%Y%m%d-%H%M%S')}")
+            os.replace(fs(self.path), fs(f"{self.path}.broken-{time.strftime('%Y%m%d-%H%M%S')}"))
             self.existed = False
         _merge_journal(self.path, self.data)  # an earlier run that was cut short
         self.run = {"id": uuid.uuid4().hex[:12], "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -158,7 +159,7 @@ class RunLog:
         self._journal = None
         save_log(self.path, self.data)  # raises: the caller stops before touching any file
         try:
-            self._journal = open(journal_path(self.path), "w", encoding="utf-8")
+            self._journal = open(fs(journal_path(self.path)), "w", encoding="utf-8")
             self._write({"journal": {k: v for k, v in self.run.items() if k != "ops"}})
         except OSError:
             self.discard()
@@ -207,7 +208,7 @@ class RunLog:
             if self.existed:
                 save_log(self.path, self.data)
             else:
-                os.remove(self.path)
+                os.remove(fs(self.path))
                 _remove_quietly(journal_path(self.path))
         except OSError:
             pass  # at worst an empty open run remains, which history and undo skip
@@ -223,34 +224,34 @@ def copy_verified(src: str, dst: str) -> None:
     h_src = hashlib.sha1()
     tmp = dst + ".part"
     try:
-        with open(src, "rb") as fi, open(tmp, "wb") as fo:
+        with open(fs(src), "rb") as fi, open(fs(tmp), "wb") as fo:
             while chunk := fi.read(CHUNK):
                 h_src.update(chunk)
                 fo.write(chunk)
-        shutil.copystat(src, tmp)
+        shutil.copystat(fs(src), fs(tmp))
         h_dst = hashlib.sha1()
-        with open(tmp, "rb") as f:
+        with open(fs(tmp), "rb") as f:
             while chunk := f.read(CHUNK):
                 h_dst.update(chunk)
         if h_src.digest() != h_dst.digest():
             raise CopyMismatch(errno.EIO, "copy differs from the original", dst)
-        os.replace(tmp, dst)
+        os.replace(fs(tmp), fs(dst))
     except BaseException:
         _remove_quietly(tmp)
         raise
 
 
 def move_file(src: str, dst: str) -> None:
-    if os.path.lexists(dst) and os.path.normcase(src) != os.path.normcase(dst):
+    if os.path.lexists(fs(dst)) and os.path.normcase(src) != os.path.normcase(dst):
         raise FileExistsError(errno.EEXIST, "target exists", dst)
     if os.path.normcase(src) == os.path.normcase(dst) and src != dst:
         # only the case of the name changes: Windows needs a detour through another name
         tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"
-        os.rename(src, tmp)
-        os.rename(tmp, dst)
+        os.rename(fs(src), fs(tmp))
+        os.rename(fs(tmp), fs(dst))
         return
     try:
-        os.rename(src, dst)
+        os.rename(fs(src), fs(dst))
         return
     except OSError as exc:
         if not _same_device_error(exc):
@@ -266,30 +267,30 @@ def move_file(src: str, dst: str) -> None:
 def remove_file(path: str) -> None:
     """os.remove that also takes read-only files (the attribute is restored on failure)."""
     try:
-        os.remove(path)
+        os.remove(fs(path))
         return
     except PermissionError:
-        mode = os.stat(path).st_mode
+        mode = os.stat(fs(path)).st_mode
         if mode & stat.S_IWRITE:
             raise  # not read-only: in use
-    os.chmod(path, stat.S_IWRITE)
+    os.chmod(fs(path), stat.S_IWRITE)
     try:
-        os.remove(path)
+        os.remove(fs(path))
     except OSError:
-        os.chmod(path, mode)
+        os.chmod(fs(path), mode)
         raise
 
 
 def copy_file(src: str, dst: str) -> None:
-    if os.path.lexists(dst):
+    if os.path.lexists(fs(dst)):
         raise FileExistsError(errno.EEXIST, "target exists", dst)
     copy_verified(src, dst)
 
 
 def _remove_quietly(path: str) -> None:
     try:
-        os.chmod(path, stat.S_IWRITE)
-        os.remove(path)
+        os.chmod(fs(path), stat.S_IWRITE)
+        os.remove(fs(path))
     except OSError:
         pass
 
@@ -317,7 +318,7 @@ def trash(path: str) -> None:
     op.pFrom = os.path.abspath(path) + "\0"  # the field needs a double NUL; ctypes adds the second
     op.fFlags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI
     rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
-    if rc != 0 or op.fAnyOperationsAborted or os.path.lexists(path):
+    if rc != 0 or op.fAnyOperationsAborted or os.path.lexists(fs(path)):
         raise OSError(errno.EIO, f"recycle bin refused ({rc})", path)
 
 
@@ -325,22 +326,22 @@ def make_dirs(folder: str, log: RunLog | None) -> None:
     """Create missing folders one level at a time so each one is logged."""
     missing = []
     d = os.path.abspath(folder)
-    while not os.path.isdir(d):
+    while not os.path.isdir(fs(d)):
         missing.append(d)
         parent = os.path.dirname(d)
         if parent == d:
             break
         d = parent
     for d in reversed(missing):
-        os.mkdir(d)
+        os.mkdir(fs(d))
         if log is not None:
             log.add(op="mkdir", path=d)
 
 
 def only_junk(folder: str) -> bool:
     try:
-        with os.scandir(folder) as it:
-            return all(e.is_file() and e.name.lower() in JUNK_NAMES for e in it)
+        with os.scandir(fs(folder)) as it:
+            return all(e.is_file() and is_junk(e.name) for e in it)
     except OSError:
         return False
 
@@ -349,11 +350,11 @@ def remove_junk_folder(folder: str) -> bool:
     if not only_junk(folder):
         return False
     try:
-        for name in os.listdir(folder):
+        for name in os.listdir(fs(folder)):
             p = os.path.join(folder, name)
-            os.chmod(p, stat.S_IWRITE)
-            os.remove(p)
-        os.rmdir(folder)
+            os.chmod(fs(p), stat.S_IWRITE)
+            os.remove(fs(p))
+        os.rmdir(fs(folder))
         return True
     except OSError:
         return False
@@ -401,12 +402,12 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
                     op = dict(op="trash", src=item.src)
                     res.trashed += 1
                 else:
-                    if not os.path.lexists(item.src):  # gone since the preview: create no folders for it
+                    if not os.path.lexists(fs(item.src)):  # gone since the preview: create no folders for it
                         raise FileNotFoundError(errno.ENOENT, "missing", item.src)
                     make_dirs(os.path.dirname(item.dst), log)
                     if item.action == COPY:
                         copy_file(item.src, item.dst)
-                        st = os.stat(item.dst)
+                        st = os.stat(fs(item.dst))
                         op = dict(op="copy", src=item.src, dst=item.dst, size=st.st_size, mtime_ns=st.st_mtime_ns)
                     else:  # MOVE, DUPE_MOVE
                         move_file(item.src, item.dst)
@@ -435,7 +436,7 @@ def execute(plan: Plan, progress: ProgressFn | None = None, cancel: threading.Ev
                     make_dirs(os.path.dirname(c.dst), log)
                     if c.op == "copy":
                         copy_file(c.src, c.dst)
-                        st = os.stat(c.dst)
+                        st = os.stat(fs(c.dst))
                         log.add(op="copy", src=c.src, dst=c.dst, size=st.st_size, mtime_ns=st.st_mtime_ns)
                     else:
                         move_file(c.src, c.dst)
