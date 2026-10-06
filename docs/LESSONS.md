@@ -194,3 +194,4 @@
 - D17. 창이 멈춘 시간을 `while: r.update()` 반복으로 쟀더니, 1,000줄씩 `after()`로 나눠 넣은 표 채우기가 `update()` 한 번 안에서 모두 처리돼 0.45초 멈춤으로 보임(실제 앱은 `mainloop`라 조각 사이에 클릭·다시 그리기를 처리) → GUI 반응성은 `mainloop` 안에서 `after(10)` 탐침이 얼마나 늦게 불리는지로 잰다(scratchpad `big_latency.py` 방식)
 - D18. Git Bash에서 D: 저장소에 있으면서 C: 스크래치패드 파일에 `sed -i`를 쓰면 "Invalid cross-device link"로 실패(파일은 그대로) → 스크래치패드 파일 수정도 Edit 도구로
 - D19. A24 빠진 곳을 점검하며 `grep … | grep -v "fs("`로 거른 결과만 보고 `scan._open`이 `fs()`를 안 거친다고 잘못 판단(함수 첫 줄 `path = fs(path)`가 걸러져 안 보였음). 또 확인 조건 `"fs(" not in s`가 `cue_refs(`에 걸림 → 적용 여부는 걸러진 grep 줄이 아니라 함수 본문을 읽어 확인하고, 이름 검사는 `\bfs\(`처럼 단어 경계로 (이 D19를 적을 때도 heredoc 안 Python 문자열의 백슬래시가 풀려 `\b`가 백스페이스 문자로 들어감 — D2 재발. 고친 뒤 `grep -c $'\b'`로 확인)
+- D20. v0.4.0 실행 확인에서 `Start-Process -PassThru`로 받은 PID만 보고 창 제목을 읽고 닫음 → 한 파일 exe는 부모(압축 해제)가 자식(창)을 띄우는 구조라 제목이 비고, 부모만 닫혀 자식 창이 남음 → 실행 확인은 exe 경로로 프로세스를 찾아(`Where-Object Path -like *\build\release\*`) 제목을 읽고 그 경로의 프로세스만 닫는다
