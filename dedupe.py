@@ -138,11 +138,12 @@ def find(tracks: list[Track], artist_map: Callable[[str], str] = lambda s: s, *,
         if cancel is not None and cancel.is_set():
             return []
         try:
-            digest = sha1_file(t.path, cancel)
+            digest = t.sha1 or sha1_file(t.path, cancel)  # known from an earlier scan of the unchanged file
         except InterruptedError:
             return []
         except OSError:
             continue
+        t.sha1 = digest
         hashes.setdefault(f"{t.size}:{digest}", []).append(key_of(t.path))
         if progress is not None:
             progress("hash", i + 1, len(to_hash))
@@ -232,17 +233,24 @@ def _fingerprints(exe: str, tracks: list[Track], progress: ProgressFn | None,
                   cancel: threading.Event | None) -> dict[str, bytes]:
     out: dict[str, bytes] = {}
     todo = [t for t in tracks if t.length > 0]
-    done = 0
+    known = [t for t in todo if t.fingerprint is not None]  # from an earlier scan of the unchanged file
+    for t in known:
+        if t.fingerprint:
+            out[key_of(t.path)] = t.fingerprint
+    done = len(known)
     with concurrent.futures.ThreadPoolExecutor(fp_workers()) as pool:
-        futures = {pool.submit(run_fpcalc, exe, t.path): t for t in todo}
+        futures = {pool.submit(run_fpcalc, exe, t.path): t for t in todo if t.fingerprint is None}
         for fut in concurrent.futures.as_completed(futures):
             if cancel is not None and cancel.is_set():
                 for f in futures:
                     f.cancel()
                 break
             fp = fut.result()
-            if fp and len(fp) >= FP_MIN_ITEMS:
-                out[key_of(futures[fut].path)] = array("I", fp[: FP_COMPARE_ITEMS + FP_MAX_OFFSET]).tobytes()
+            t = futures[fut]
+            if fp:  # None: fpcalc failed this time (locked file...), so it is tried again next time
+                t.fingerprint = array("I", fp[: FP_COMPARE_ITEMS + FP_MAX_OFFSET]).tobytes() if len(fp) >= FP_MIN_ITEMS else b""
+                if t.fingerprint:
+                    out[key_of(t.path)] = t.fingerprint
             done += 1
             if progress is not None:
                 progress("fingerprint", done, len(todo))

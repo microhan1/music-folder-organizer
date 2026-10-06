@@ -19,6 +19,7 @@ LRC_EXT = ".lrc"
 TAGBAK_SUFFIX = ".tagbak.json"  # music-tag-filler's per-file backup
 COVER_NAMES = {f"{stem}{ext}" for stem in ("cover", "folder", "front") for ext in (".jpg", ".jpeg", ".png")}
 JUNK_NAMES = {"thumbs.db", ".ds_store", "desktop.ini", "ehthumbs.db"}
+
 LOG_NAME = "organize_log.json"
 # album extras that may follow a whole album to its new folder (anything else stays put)
 SIDECAR_EXTS = {".cue", ".log", ".txt", ".nfo", ".m3u", ".m3u8", ".pdf", ".accurip", ".sfv", ".md5", ".ffp",
@@ -54,6 +55,9 @@ class Track:
     lossless: bool = False
     tags: TagSet = dataclasses.field(default_factory=TagSet)
     error: str = ""  # unreadable file: tags stay empty
+    # filled in by dedupe when first needed; TagCache carries them on while the file is unchanged
+    sha1: str = dataclasses.field(default="", compare=False, repr=False)
+    fingerprint: bytes | None = dataclasses.field(default=None, compare=False, repr=False)  # b"": too short to use
 
     @property
     def folder(self) -> str:
@@ -106,10 +110,44 @@ def format_of(path: str) -> str | None:
 ProgressFn = Callable[[int, int], None]
 
 
+class TagCache:
+    """Tracks read by an earlier scan, so a rescan (after a run, an undo, Music Tag
+    Filler) opens only files that changed.
+
+    A file is known by its identity on the disk — volume and file number, which a
+    move within a drive keeps — and must still have the same size and modified
+    time; then its tags are taken as read before, under its new path. Where the
+    drive gives no file number (FAT32, some network drives) the path is the key.
+    Files that could not be read are never kept: they may be readable next time.
+    Memory only: nothing outlives the program."""
+
+    def __init__(self) -> None:
+        self._entries: dict[tuple, tuple[int, int, Track]] = {}
+        self.hits = 0  # files the last scan did not have to open
+
+    @staticmethod
+    def key(path: str, st: os.stat_result) -> tuple:
+        return ("id", st.st_dev, st.st_ino) if st.st_ino else ("path", key_of(path))
+
+    def get(self, path: str, st: os.stat_result) -> Track | None:
+        entry = self._entries.get(self.key(path, st))
+        if entry is None or entry[0] != st.st_size or entry[1] != st.st_mtime_ns:
+            return None
+        return dataclasses.replace(entry[2], path=os.path.abspath(path))
+
+    def add(self, entries: dict[tuple, tuple[int, int, Track]], hits: int) -> None:
+        """Keeps what the scan just saw. Files that left the scan stay known: duplicates
+        sent to the excluded dupes folder come back on undo. An old entry is harmless;
+        it is used only while size and modified time still match."""
+        self._entries.update(entries)
+        self.hits = hits
+
+
 def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | None = None,
-         cancel: threading.Event | None = None) -> ScanResult:
+         cancel: threading.Event | None = None, cache: TagCache | None = None) -> ScanResult:
     """Every music file under root (sorted), with tags. ``exclude`` lists folders
-    whose subtree is skipped (the dupes folder, a destination inside root)."""
+    whose subtree is skipped (the dupes folder, a destination inside root).
+    With ``cache``, unchanged files are not opened again (see TagCache)."""
     root = os.path.abspath(root)
     skip = {key_of(p) for p in (exclude or [])}
     dirs: dict[str, DirInfo] = {}
@@ -127,12 +165,27 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
         audio.extend(os.path.join(here, f) for f in files if format_of(f))
     tracks: list[Track] = []
     total = len(audio)
+    seen: dict[tuple, tuple[int, int, Track]] = {}
+    hits = 0
     for i, path in enumerate(audio):
         if cancel is not None and cancel.is_set():
-            return ScanResult(root, tracks, dirs, cancelled=True)
-        tracks.append(read_track(path))
+            return ScanResult(root, tracks, dirs, cancelled=True)  # the cache stays as it was
+        try:
+            st = os.stat(path)
+        except OSError:
+            st = None
+        track = cache.get(path, st) if (cache is not None and st is not None) else None
+        if track is None:
+            track = read_track(path, st)
+        else:
+            hits += 1
+        if cache is not None and st is not None and not track.error:
+            seen[cache.key(path, st)] = (st.st_size, st.st_mtime_ns, track)
+        tracks.append(track)
         if progress is not None and (i % 25 == 0 or i + 1 == total):
             progress(i + 1, total)
+    if cache is not None:
+        cache.add(seen, hits)
     return ScanResult(root, tracks, dirs)
 
 
@@ -161,10 +214,10 @@ def cue_refs(path: str) -> set[str]:
 
 
 # ------------------------------------------------------------------ reading
-def read_track(path: str) -> Track:
+def read_track(path: str, st: os.stat_result | None = None) -> Track:
     fmt = format_of(path) or ""
     try:
-        size = os.path.getsize(path)
+        size = (st or os.stat(path)).st_size
     except OSError:
         size = 0
     track = Track(os.path.abspath(path), fmt, size)

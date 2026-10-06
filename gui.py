@@ -158,6 +158,7 @@ class App:
         self.index: ArtistIndex | None = None
         self.groups: list[dedupe.DupeGroup] = []
         self.overrides: dict[str, bool] = {}
+        self.tag_cache = scan_mod.TagCache()  # rescans open only files that changed (used by one scan at a time)
         self.plan: plan_mod.Plan | None = None
         self.last_log = ""
         self.busy = False
@@ -689,7 +690,7 @@ class App:
 
         def work():
             res = scan_mod.scan(root, excl, progress=lambda d, n: self.queue.put(("progress", d, n, "msg_reading")),
-                                cancel=self.cancel)
+                                cancel=self.cancel, cache=self.tag_cache)
             if res.cancelled:
                 return ("scanned", None)
             index, err = session.make_index(res.tracks, self.prefs, session.existing_folders(res, opts.dest))

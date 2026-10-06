@@ -730,3 +730,27 @@ def test_example_follows_the_typed_pattern_while_the_plan_is_built(app, lib, slo
     assert "Fairy/Beta.mp3" in app.lbl_example.cget("text")  # not the old "…/02 - Beta.mp3"
     app.wait()
     assert "Fairy/Beta.mp3" in app.lbl_example.cget("text")
+
+
+# ------------------------------------------------------------------ v0.4.0 item 3: rescans reuse unchanged tags
+def test_rescan_after_run_and_undo_opens_no_file(app, lib, dialogs, monkeypatch):
+    import scan as scan_mod
+
+    real, opened = scan_mod._open, []
+    monkeypatch.setattr(scan_mod, "_open", lambda path, fmt: (opened.append(path), real(path, fmt))[1])
+    app.load_source(str(lib))
+    app.wait()
+    n = len(app.scan.tracks)
+    assert len(opened) == n
+    opened.clear()
+    app._run()
+    app.wait()
+    app.wait()
+    assert app.plan.summary()["move"] == 0  # rescanned after the run: all in place
+    assert len(app.scan.tracks) < n  # the duplicates went to the dupes folder, which scans skip
+    assert opened == [] and app.tag_cache.hits == len(app.scan.tracks)
+    app._undo()
+    app.wait()
+    app.wait()
+    assert len(app.scan.tracks) == n  # back, duplicates included
+    assert opened == [] and app.tag_cache.hits == n
