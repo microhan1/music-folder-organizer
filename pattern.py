@@ -70,6 +70,12 @@ def _value(name: str, track: Track, artist_map: Callable[[str], str], multi_disc
     return getattr(tags, name, "") or ""
 
 
+def names_the_file_by_title(pattern: str) -> bool:
+    """True when the last part of the pattern (the file name) is built from {title}."""
+    last = re.split(r"[/\\]", pattern.strip().strip("/\\"))[-1]
+    return any("title" in [n.strip() for n in m.group(1).split("|")] for m in _TOKEN.finditer(last))
+
+
 def _format(value: str | int, spec: str) -> str:
     if not spec:
         return str(value)

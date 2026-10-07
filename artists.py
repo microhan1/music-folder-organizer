@@ -71,6 +71,13 @@ def normalize_text(text: str) -> str:
     return "".join(ch for ch in text if ch.isalnum())
 
 
+def sanitize_name(name: str) -> str:
+    """The name as the pattern writes it into a path (what is on the disk)."""
+    from pattern import sanitize
+
+    return unicodedata.normalize("NFC", sanitize(name))
+
+
 def folder_key(name: str) -> str:
     """How a name compares with folder names on disk: as the pattern would write it,
     case-insensitive and NFC."""
@@ -170,6 +177,7 @@ class ArtistIndex:
         self.aliases = aliases or {}
         self.preference = preference
         self.existing = existing or set()
+        self.existing_exact = set(getattr(existing, "exact", ()))  # session.ExistingNames: the spellings as written
         self.no_merge = {normalize(n) for n in (no_merge or [])}
         self.rejected = {tuple(sorted(normalize(n) for n in g)) for g in (rejected or [])}
         self.counts: Counter[str] = Counter()
@@ -252,13 +260,37 @@ class ArtistIndex:
         self.guesses = self._guess(tracks)
 
     def _pick(self, names: list[str]) -> str:
-        """Among the spellings in the preferred script: one that already has a folder,
-        then the one on most files."""
+        """Among the spellings in the preferred script: the exact one already on the disk (a folder
+        name, or the "Artist" of "Artist - Title" file names), then one whose folder exists in another
+        case, then the one on most files.
+
+        The spelling on the disk can be one no remaining file carries any more (its duplicates went to
+        the duplicates folder): it joins the candidates, or the next run would rename the folder."""
         want_latin = self.preference == "latin"
         preferred = [n for n in names if is_latin(n) == want_latin and script_of(n) != "none"]
-        pool = preferred or names
-        return sorted(pool, key=lambda n: (0 if folder_key(n) in self.existing else 1,
-                                           -self.counts[n], self._order.get(n, 0)))[0]
+        pool = list(preferred or names)
+        if self.existing_exact:
+            keys = {normalize(n) for n in names}
+            written = {sanitize_name(n) for n in names}
+
+            def on_disk_keys(e: str) -> set[str]:
+                # "Minako Yoshida (吉田美奈子)" on the disk is the same artist as the bare "吉田美奈子" tag
+                alias = split_alias(e)[1]
+                return {normalize(e)} | ({normalize(alias)} if alias else set())
+
+            pool += [e for e in sorted(self.existing_exact)
+                     if e not in written and on_disk_keys(e) & keys and (is_latin(e) == want_latin or not preferred)
+                     and script_of(e) != "none"]
+
+        def rank(n: str) -> int:
+            if sanitize_name(n) in self.existing_exact:
+                return 0
+            return 1 if folder_key(n) in self.existing else 2
+
+        def in_script(n: str) -> int:  # the preferred script wins a tie between spellings both on the disk
+            return 0 if is_latin(n) == want_latin and script_of(n) != "none" else 1
+
+        return sorted(pool, key=lambda n: (rank(n), in_script(n), -self.counts[n], self._order.get(n, 0)))[0]
 
     def cluster_of(self, name: str) -> Cluster | None:
         return self._cluster_of.get(name)

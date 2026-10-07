@@ -30,14 +30,37 @@ def excludes(root: str, dest: str, p: Prefs) -> list[str]:
     return out
 
 
-def existing_folders(scan: ScanResult | None, dest: str | None = None, depth: int = 3) -> set[str]:
-    """Names (folder_key) of folders already on disk in the source and, when it lies
-    elsewhere, the first levels of the destination."""
-    names = {folder_key(os.path.basename(info.path)) for info in scan.dirs.values()} if scan else set()
+class ExistingNames(set):
+    """Names (folder_key) of what is already on the disk; ``exact`` holds them as written, which the
+    keys (case-folded) cannot tell apart: "Artist A" and "ARTIST A" are one key."""
+
+    exact: set[str]
+
+    def __init__(self, keys=()) -> None:
+        super().__init__(keys)
+        self.exact = set()
+
+    def add_name(self, name: str) -> None:
+        self.add(folder_key(name))
+        self.exact.add(name)
+
+
+def existing_folders(scan: ScanResult | None, dest: str | None = None, depth: int = 3) -> ExistingNames:
+    """What the artist names may already be on the disk: folders in the source and, when it lies
+    elsewhere, the first levels of the destination, and the "Artist" in front of " - " in the file
+    names (for patterns like "{year}/{artist} - {title}", where no folder carries the name)."""
+    names = ExistingNames()
+    for info in (scan.dirs.values() if scan else ()):
+        names.add_name(os.path.basename(info.path))
+    for track in (scan.tracks if scan else ()):
+        stem = os.path.splitext(track.name)[0]
+        if " - " in stem:
+            names.add_name(stem.split(" - ")[0].strip())
     if dest and os.path.isdir(fs(dest)) and not (scan and key_in(dest, scan.root)):
         base = os.path.abspath(dest).rstrip(os.sep).count(os.sep)
         for here, subdirs, _ in walk(dest):
-            names.update(folder_key(d) for d in subdirs)
+            for d in subdirs:
+                names.add_name(d)
             if here.rstrip(os.sep).count(os.sep) - base >= depth - 1:
                 subdirs[:] = []
     return names

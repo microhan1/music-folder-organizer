@@ -38,7 +38,7 @@ def walk(top: str) -> Iterator[tuple[str, list[str], list[str]]]:
     260 characters. os.walk joins child paths itself and hides listing errors, so below a
     certain depth it silently stops finding anything when long paths are off; this builds
     each path from the plain parent and lists it through fs(). Yields plain paths. Folders it
-    cannot list are skipped. A symlink to a folder is listed as a file, never entered."""
+    cannot list are skipped. A symlink or junction to a folder is neither listed nor entered."""
     stack = [top]
     while stack:
         here = stack.pop()
@@ -52,6 +52,8 @@ def walk(top: str) -> Iterator[tuple[str, list[str], list[str]]]:
         for e in entries:
             try:
                 is_dir = e.is_dir(follow_symlinks=False)
+                if is_dir and (e.is_symlink() or e.is_junction()):
+                    continue  # a link can lead back up the tree: the same files again and again (LESSONS A33)
             except OSError:
                 is_dir = False
             (subdirs if is_dir else files).append(e.name)

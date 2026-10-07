@@ -7,12 +7,14 @@ cheap (a few ms per thousand files).
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 from collections import Counter
 
+import i18n
 import pattern as pattern_mod
 from artists import ArtistIndex
-from dedupe import DupeGroup
+from dedupe import DupeGroup, sha1_file
 from longpath import fs
 from scan import (COVER_NAMES, LRC_EXT, SIDECAR_EXTS, TAGBAK_SUFFIX, ScanResult, Track, format_of,
                   is_junk, key_of, target_key)
@@ -112,38 +114,62 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
             removable[key_of(t.path)] = g.id
     group_of = {key_of(t.path): g.id for g in groups or [] for t in g.members}
     copy = opts.mode == "copy"
-    items: list[Item] = []
-    for track in sorted(scan.tracks, key=lambda t: key_of(t.path)):
-        k = key_of(track.path)
-        untagged = track.is_untagged() or bool(track.error)
-        if k in removable:
-            action = SKIP if copy else (DUPE_TRASH if opts.dupes_action == "trash" else DUPE_MOVE)
-            status, checked = DUP, not copy
-        else:
-            action = COPY if copy else MOVE
-            status, checked = (UNTAGGED if untagged else OK), (opts.include_untagged or not untagged)
-        if k in overrides:
-            checked = overrides[k]
-        if action == SKIP and checked:  # copy mode: a checked duplicate is copied like any file
-            action = COPY
-        item = Item(track, track.path, "", status, checked, action, group=group_of.get(k, 0))
-        _artist_note(item, index)
-        items.append(item)
+
+    def make_items() -> list[Item]:
+        out: list[Item] = []
+        for track in sorted(scan.tracks, key=lambda t: key_of(t.path)):
+            k = key_of(track.path)
+            untagged = track.is_untagged() or bool(track.error)
+            if k in removable:
+                action = SKIP if copy else (DUPE_TRASH if opts.dupes_action == "trash" else DUPE_MOVE)
+                status, checked = DUP, not copy
+            else:
+                action = COPY if copy else MOVE
+                status, checked = (UNTAGGED if untagged else OK), (opts.include_untagged or not untagged)
+            if k in overrides:
+                checked = overrides[k]
+            if action == SKIP and checked:  # copy mode: a checked duplicate is copied like any file
+                action = COPY
+            item = Item(track, track.path, "", status, checked, action, group=group_of.get(k, 0))
+            _artist_note(item, index)
+            out.append(item)
+        return out
 
     # folders whose .cue sheet names their own music files: renaming those files would break the sheet
     cue_dirs = {k for k, info in scan.dirs.items()
                 if info.cue_refs & {f.lower() for f in info.files if format_of(f)}}
     multi = multi_disc_albums(scan.tracks, artist_map)
-    claimed: set[str] = set()
-    counters: dict[str, int] = {}
-    disk = _Listing()
-    for item in items:
-        item.keep_name = key_of(item.track.folder) in cue_dirs and item.action not in (DUPE_MOVE, DUPE_TRASH)
-        item.multi_disc = album_id(item.track, artist_map) in multi
-        _place(item, scan.root, opts, artist_map, claimed, counters, disk)
-    companions = _companions(items, scan, opts, disk)
+    multi |= _already_multi_disc(scan, opts, artist_map, multi)
+    scanned = frozenset(key_of(t.path) for t in scan.tracks)
+    release: set[str] = set()  # tracks whose cue sheet does not travel with them: they get the pattern's name
+    for _ in range(3):  # each round can only add to ``release``; one extra round is the most it ever needs
+        items = make_items()
+        claimed: set[str] = set()
+        counters: dict[str, int] = {}
+        disk = _Listing()
+        for item in items:
+            item.keep_name = (key_of(item.track.folder) in cue_dirs and item.action not in (DUPE_MOVE, DUPE_TRASH)
+                              and item.key not in release)
+            item.multi_disc = album_id(item.track, artist_map) in multi
+            _place(item, scan.root, opts, artist_map, claimed, counters, disk, scanned)
+        companions = _companions(items, scan, opts, disk)
+        # a name shortened for the path limit no longer matches what the cue sheet says: the sheet is already
+        # broken, and the next run would take the file for an ordinary one and rename it
+        stranded = {i.key for i in items
+                    if i.keep_name and i.moves and (i.truncated or not _cue_travels(i, companions))}
+        if not stranded:
+            break
+        release |= stranded
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
     return Plan(opts, items, companions, empty)
+
+
+def _cue_travels(item: Item, companions: list[Companion]) -> bool:
+    """A file that leaves its folder keeps its name only while the .cue sheet that names it goes along
+    (the whole album moves to one folder, sidecars on). When the sheet stays behind, the next run finds
+    the file in a folder without a sheet and renames it: the name is changed now, once, instead."""
+    owner = "dir:" + key_of(item.track.folder)
+    return any(c.owner == owner and c.kind == "sidecar" and c.src.lower().endswith(".cue") for c in companions)
 
 
 def album_id(track: Track, artist_map) -> tuple[str, str]:
@@ -170,6 +196,27 @@ def multi_disc_albums(tracks: list[Track], artist_map=lambda s: s) -> set[tuple[
     return {k for k, v in discs.items() if len(v) > 1} | totals
 
 
+def _already_multi_disc(scan: ScanResult, opts: Options, artist_map, known: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """"{disc}" shows only for albums with two or more discs, judged from the files present. When a run
+    takes the duplicates of the second disc away, one disc is left, and the names written with the disc
+    number ("1-01 - Song") would lose it on the next run. An album with a file that already sits exactly
+    where the multi-disc rendering puts it is a multi-disc album (LESSONS A34)."""
+    if "disc" not in pattern_mod.placeholders_in(opts.pattern):
+        return set()
+    found: set[tuple[str, str]] = set()
+    for t in scan.tracks:
+        if not t.tags.album or not (t.tags.disc or "").split("/")[0].strip().isdigit():
+            continue
+        key = album_id(t, artist_map)
+        if key in known or key in found:
+            continue
+        segs = pattern_mod.render(opts.pattern, t, opts.fallbacks, artist_map, True)
+        want = os.path.join(opts.dest, *segs[:-1], segs[-1] + os.path.splitext(t.path)[1])
+        if os.path.normcase(want) == os.path.normcase(t.path):
+            found.add(key)
+    return found
+
+
 def _artist_note(item: Item, index: ArtistIndex | None) -> None:
     if index is None:
         return
@@ -187,6 +234,37 @@ def _artist_note(item: Item, index: ArtistIndex | None) -> None:
     item.artist_note = ", ".join(notes)
 
 
+@functools.lru_cache(maxsize=None)
+def _fallback_names(key: str) -> frozenset[str]:
+    """The stand-in name for an empty tag ("Unknown Album") in every language."""
+    return frozenset(i18n.all_values(f"fallback_{key}"))
+
+
+def _stable_fallbacks(item: Item, opts: Options) -> dict:
+    """Stand-in names come from the language file, so switching the language would send every file in an
+    "Unknown Album" folder to "不明なアルバム" on the next run. A track that already sits in a folder with
+    a stand-in name (any language), or has one in front of " - " in its file name, keeps that name. A
+    text typed in Settings never changes with the language and is left alone."""
+    result = opts.fallbacks
+    try:
+        rel = os.path.relpath(item.track.folder, opts.dest)
+        if rel.startswith(".."):
+            rel = os.path.relpath(item.track.folder, opts.root)
+    except ValueError:
+        return result
+    parts = set(rel.split(os.sep))
+    stem = os.path.splitext(item.track.name)[0]
+    if " - " in stem:
+        parts.add(stem.split(" - ")[0].strip())  # "{artist} - {title}": the stand-in name lives in the file name
+    for key, current in opts.fallbacks.items():
+        if current != i18n.t(f"fallback_{key}"):
+            continue  # typed by the user
+        found = next((p for p in parts if p in _fallback_names(key)), None)
+        if found and found != current:
+            result = {**result, key: found}
+    return result
+
+
 def _target(item: Item, root: str, opts: Options, artist_map) -> tuple[list[str], str, str]:
     track = item.track
     ext = os.path.splitext(track.path)[1]
@@ -194,10 +272,22 @@ def _target(item: Item, root: str, opts: Options, artist_map) -> tuple[list[str]
         rel = os.path.relpath(track.path, root)
         parts = rel.split(os.sep)
         return [opts.dupes_name, *parts[:-1]], os.path.splitext(parts[-1])[0], ext
-    segs = pattern_mod.render(opts.pattern, track, opts.fallbacks, artist_map, item.multi_disc)
-    if item.keep_name:
+    segs = pattern_mod.render(opts.pattern, track, _stable_fallbacks(item, opts), artist_map, item.multi_disc)
+    # A file with no title tag has no title to build a name from, only its own name: using that as {title}
+    # put the pattern's other parts in front of it again on every run ("01 track01" -> "01 01 track01" ->
+    # ...). It keeps its name; only the folder follows the pattern (LESSONS A28).
+    if item.keep_name or (not track.tags.title and pattern_mod.names_the_file_by_title(opts.pattern)):
         return segs[:-1], os.path.splitext(track.name)[0], ext  # the pattern picks the folder only
     return segs[:-1], segs[-1], ext
+
+
+def _numbered(base: str, dirs: list[str], stem: str, ext: str, n: int) -> tuple[list[str], str, bool]:
+    """"Song (2)" within the path limit. The name is shortened first and the number added after: fitting
+    "Song (2)" itself cut the number off a long name, every n gave the same path, and the numbering loop
+    in _place never ended (the window froze) (LESSONS A27)."""
+    suffix = f" ({n})"
+    d2, s2, cut = pattern_mod.fit(base, dirs, stem, ext, limit=pattern_mod.PATH_LIMIT - len(suffix))
+    return d2, s2 + suffix, cut
 
 
 class _Listing:
@@ -221,8 +311,34 @@ class _Listing:
         return os.path.normcase(name) in names
 
 
+def _already_copied(item: Item, dst: str, base: str, dirs: list[str], stem: str, ext: str, disk: "_Listing",
+                    scanned: set[str]) -> bool:
+    """Copy mode: walk the names this track would get ("x", "x (2)", ...) while one exists on the disk;
+    when one of them is this track's own earlier copy (same bytes, and not part of this scan), there is
+    nothing to copy. Running the same copy again must not add "x (2)" for every file (LESSONS A32)."""
+    n = 1
+    while disk.lexists(dst):
+        if key_of(dst) not in scanned and _same_bytes(item.track, dst):
+            item.status, item.dst = SAME, item.src
+            return True
+        n += 1
+        d2, s2, _ = _numbered(base, dirs, stem, ext, n)
+        dst = os.path.join(base, *d2, s2 + ext)
+    return False
+
+
+def _same_bytes(track: Track, path: str) -> bool:
+    try:
+        if os.path.getsize(fs(path)) != track.size:
+            return False
+        track.sha1 = track.sha1 or sha1_file(track.path)
+        return sha1_file(path) == track.sha1
+    except OSError:
+        return False
+
+
 def _place(item: Item, root: str, opts: Options, artist_map, claimed: set[str], counters: dict[str, int],
-           disk: "_Listing") -> None:
+           disk: "_Listing", scanned: frozenset[str] = frozenset()) -> None:
     dirs, stem, ext = _target(item, root, opts, artist_map)
     base = opts.dest
     if item.action == DUPE_TRASH:
@@ -242,17 +358,19 @@ def _place(item: Item, root: str, opts: Options, artist_map, claimed: set[str], 
     if not item.checked:
         item.dst = dst  # shown greyed; claims nothing
         return
+    if opts.mode == "copy" and _already_copied(item, dst, base, dirs, stem, ext, disk, scanned):
+        return
     # numbering resumes where the last file with this name stopped: a thousand
     # identical names cost a thousand checks, not half a million
     name_key = target_key(dst)
     n = counters.get(name_key, 1)
     if n > 1:
-        d2, s2, cut = pattern_mod.fit(base, dirs, f"{stem} ({n})", ext)
+        d2, s2, cut = _numbered(base, dirs, stem, ext, n)
         dst = os.path.join(base, *d2, s2 + ext)
     own = os.path.normcase(item.src)
     while target_key(dst) in claimed or (disk.lexists(dst) and os.path.normcase(dst) != own):
         n += 1
-        d2, s2, cut = pattern_mod.fit(base, dirs, f"{stem} ({n})", ext)
+        d2, s2, cut = _numbered(base, dirs, stem, ext, n)
         item.truncated = item.truncated or cut
         dst = os.path.join(base, *d2, s2 + ext)
     counters[name_key] = n
