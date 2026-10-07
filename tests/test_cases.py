@@ -54,6 +54,11 @@ def test_long_names_get_numbers_instead_of_hanging(tmp_path):
     assert all(len(d) <= 240 for d in dsts), max(map(len, dsts))
     numbers = sorted(m.group(0) if (m := re.search(r" \(\d+\)$", os.path.splitext(d)[0])) else "" for d in dsts)
     assert numbers == ["", " (2)", " (3)", " (4)"], numbers  # the number survives the cut, one per file
+    # and the run is quiet the second time: numbered files sort before the plain one, and a per-name counter
+    # must not push the plain file past its own slot (photo-organizer found exactly this, its LESSONS A17)
+    assert not mover.execute(p).failed
+    _, p2 = build(folder)
+    assert idle(p2) == [], idle(p2)
 
 
 # ------------------------------------------------------------------ A28: names that grew on every run
