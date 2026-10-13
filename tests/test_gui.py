@@ -796,3 +796,78 @@ def test_dupes_tab_hides_groups_where_every_album_keeps_its_copy(app, lib):
     app._replan()
     app.wait()
     assert f"g{first.id}" in app.dtree.get_children()
+
+
+# ------------------------------------------------------------------ update check notice (tool-update-check)
+def _info(latest="0.4.3"):
+    import update_check
+
+    return update_check.UpdateInfo(latest, "0.4.2", "https://chaekgalpi.co.kr/tools/musicfolder?utm_source=app")
+
+
+def _boxes(app):
+    """Screen y and height of the header card, the tabs, the action bar and the notice."""
+    app.pump(0.3)
+    nb, bar, note = app.notebook, app._action_bar, app.frm_update
+    return {"tabs_top": nb.winfo_rooty(), "tabs_h": nb.winfo_height(), "bar_top": bar.winfo_rooty(),
+            "bar_h": bar.winfo_height(), "note_top": note.winfo_rooty() if note.winfo_manager() else None,
+            "note_h": note.winfo_height() if note.winfo_manager() else 0}
+
+
+def test_update_notice_shows_under_the_action_bar_and_keeps_the_layout(app, lib):
+    app.load_source(str(lib))
+    app.wait()
+    before = _boxes(app)
+    app._on_update_result(_info(), True)
+    after = _boxes(app)
+    assert "0.4.3" in app.lbl_update.cget("text") and "0.4.2" in app.lbl_update.cget("text")
+    assert i18n.load_settings()["update_check_last"]  # the server answered: today is used up
+    assert after["tabs_top"] == before["tabs_top"]  # nothing above the tabs moved
+    assert after["bar_h"] == before["bar_h"] and after["note_top"] > after["bar_top"]  # bar intact, notice under it
+    assert after["tabs_h"] > 200 and before["tabs_h"] - after["tabs_h"] <= after["note_h"] + 20  # only the table gave room
+    app.notebook.select(1)
+    app.pump(0.2)
+    assert app.dtree.winfo_height() > 50  # the duplicates table still has rows
+
+
+def test_update_notice_not_answered_leaves_the_day(app):
+    app._on_update_result(None, False)
+    assert not app.frm_update.winfo_manager()
+    assert not i18n.load_settings().get("update_check_last")
+
+
+def test_update_later_skips_that_version(app):
+    app._on_update_result(_info(), True)
+    app._update_later()
+    assert not app.frm_update.winfo_manager()
+    assert i18n.load_settings()["update_check_skipped"] == "0.4.3"
+
+
+def test_update_button_opens_only_the_tools_page(app, monkeypatch):
+    import dataclasses
+    import webbrowser
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    app._on_update_result(_info(), True)
+    app._update_open()
+    assert opened == [_info().url] and not app.frm_update.winfo_manager()
+    app._update_info = dataclasses.replace(_info(), url="https://evil.example/")
+    app._update_open()
+    assert opened == [_info().url]  # nothing opened for another site
+
+
+def test_update_notice_survives_a_language_switch_and_settings_can_turn_it_off(app):
+    app._on_update_result(_info(), True)
+    app.var_lang.set(i18n.LANG_NAMES["ko"])
+    app._on_lang()
+    assert app.frm_update.winfo_manager() and "0.4.3" in app.lbl_update.cget("text")
+    app.var_lang.set(i18n.LANG_NAMES["en"])
+    app._on_lang()
+    app._show_settings()
+    app.set_update.set(False)
+    app._save_settings()
+    assert not app.frm_update.winfo_manager()
+    assert i18n.load_settings()["update_check"] is False
+    app._on_update_result(_info(), True)  # switched off: a late answer shows nothing
+    assert not app.frm_update.winfo_manager()

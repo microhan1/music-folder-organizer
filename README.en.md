@@ -4,7 +4,7 @@
 
 [한국어](README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-> **Works without an internet connection.**
+> **Works without an internet connection** (except the update check — only the tool's name and version, once a day, can be turned off in Settings).
 > **The default is move, not copy. Undo is always there.**
 
 A Windows tool that takes music scattered across `Downloads/New folder/New folder (2)` and moves it into `Artist/Album/01 - Title.mp3` folders based on the tags (artist, album, track, title), and finds songs you have more than once.
@@ -113,10 +113,17 @@ If tags are empty, fill them first with [Music Tag Filler](https://github.com/mi
 - Its backups (`.tagbak.json`) move with the files, so its Undo still works after the folders are reorganized.
 - **Export missing-tag list** writes those files to `untagged.txt`.
 
+## Update check
+
+At start the tool sends only its name and version to the 책갈피 server (chaekgalpi.co.kr) to see whether a newer version exists. No files are sent, it checks once a day, and it can be turned off in Settings. When there is one, a single line appears at the bottom of the window (**Update** opens the 책갈피 tools page, **Later** stops showing that version); without a connection it says nothing.
+
+![One-line notice at the bottom of the window](docs/update_notice.png)
+
 ## What it does not do
 
 - It never edits tags; it only reads them (editing is Music Tag Filler's job).
-- It never connects to the internet. Fingerprints are compared locally.
+- Apart from the update check it never connects to the internet. Fingerprints are compared locally.
+- It never downloads or replaces a new version by itself.
 - It never deletes files outright: duplicates go to the `_Duplicates` folder or the recycle bin.
 - No format conversion, playback or playlists.
 - Lyrics, covers and album extras only travel with the music; their content is never edited.

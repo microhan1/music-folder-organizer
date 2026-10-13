@@ -36,6 +36,9 @@ class Prefs:
     fpcalc_path: str = ""
     tag_filler_path: str = ""  # music-tag-filler.exe, asked for once
     last_log: str = ""
+    update_check: bool = True  # once a day, ask the tools site whether a newer version exists
+    update_check_last: str = ""  # YYYY-MM-DD of the last check the server answered
+    update_check_skipped: str = ""  # "Later" was pressed for this version: do not show it again
 
     def fallback(self, key: str) -> str:
         value = self.fallbacks.get(key)
@@ -108,6 +111,9 @@ def load() -> Prefs:
         fpcalc_path=typed("fpcalc_path", str),
         tag_filler_path=typed("tag_filler_path", str),
         last_log=typed("last_log", str),
+        update_check=typed("update_check", bool),
+        update_check_last=typed("update_check_last", str).strip()[:10],
+        update_check_skipped=typed("update_check_skipped", str).strip()[:32],
     )
     if p.dupes_action not in ("move", "trash"):
         p.dupes_action = default.dupes_action

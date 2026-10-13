@@ -22,6 +22,22 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Every App the tests open schedules an update check: never let it reach the real server.
+    (check_async binds its default fetcher when defined, so the function itself is wrapped; a
+    test that passes its own fetcher keeps it.)"""
+    import update_check
+
+    real = update_check.check_async
+
+    def offline(*args, **kwargs):
+        kwargs.setdefault("fetcher", lambda slug, version: None)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(update_check, "check_async", offline)
+
+
 def sample(name: str) -> str:
     path = os.path.join(SAMPLES, name)
     if not os.path.exists(path):

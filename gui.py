@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import dedupe
@@ -25,8 +26,10 @@ import prefs as prefs_mod
 import scan as scan_mod
 import session
 import undo as undo_mod
+import update_check
 from artists import ArtistIndex, save_aliases
 from i18n import t
+from version import APP_VERSION
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -54,6 +57,9 @@ CONFLICT_BG = "#fff6dc"
 DUP_FG = "#c2410c"
 GUESS_FG = "#2563eb"
 ERROR_FG = "#c62828"
+UPDATE_BG = "#eff6ff"  # the one-line "new version" notice
+UPDATE_BORDER = "#bfdbfe"
+UPDATE_SLUG = "musicfolder"  # the tool's name on the 책갈피 tools site
 ERROR_SOFT = "#fdecec"
 MAX_LIST = 30  # lines of a failure list shown in a dialog
 TAG_FILLER_EXE = "music-tag-filler.exe"
@@ -200,6 +206,7 @@ class App:
         self.var_sidecars = tk.BooleanVar(value=self.prefs.move_sidecars)
         self.var_fp = tk.BooleanVar(value=False)
         self.var_dupes_all = tk.BooleanVar(value=False)  # duplicates tab: also groups where every file stays
+        self._update_info: update_check.UpdateInfo | None = None  # a newer version to tell about
         self.var_dupes_action = tk.StringVar(value=self.prefs.dupes_action)
         self.var_pref = tk.StringVar(value=self.prefs.artist_name_preference)
         self.var_lang = tk.StringVar(value=i18n.LANG_NAMES[i18n.current_lang()])
@@ -226,6 +233,8 @@ class App:
             root.dnd_bind("<<Drop>>", self._on_drop)  # type: ignore[attr-defined]
         if initial and os.path.isdir(initial):
             root.after(200, lambda: self.load_source(initial))
+        # once a day, 1.5 s after the window is up, on a background thread; silent on any failure
+        update_check.check_async(root, UPDATE_SLUG, APP_VERSION, self.prefs, self._on_update_result)
 
     # ------------------------------------------------------------------ layout
     def _style(self) -> None:
@@ -374,6 +383,15 @@ class App:
         # the action bar is packed before the body so a short window squeezes the table, not the buttons
         bar = ttk.Frame(outer, padding=(20, 12))
         bar.pack(side="bottom", fill="x")
+        self._action_bar = bar
+        # one-line "new version" notice under the action bar, packed only while there is one
+        self.frm_update = tk.Frame(outer, bg=UPDATE_BG, highlightthickness=1, highlightbackground=UPDATE_BORDER)
+        # fixed-size buttons first, then the stretching label (LESSONS A15/A18)
+        ttk.Button(self.frm_update, text=t("btn_later"), command=self._update_later).pack(side="right", padx=(6, 10), pady=5)
+        ttk.Button(self.frm_update, text=t("btn_update"), style="Accent.TButton",
+                   command=self._update_open).pack(side="right", pady=5)
+        self.lbl_update = tk.Label(self.frm_update, bg=UPDATE_BG, fg=TEXT, font=self.f_base, anchor="w")
+        self.lbl_update.pack(side="left", fill="x", expand=True, padx=(12, 8), pady=6)
         tk.Frame(outer, bg=BORDER, height=1).pack(side="bottom", fill="x")
         body = ttk.Frame(outer, style="Body.TFrame", padding=(20, 16, 20, 16))
         body.pack(fill="both", expand=True)
@@ -629,6 +647,7 @@ class App:
                 win.destroy()  # it would keep the old language
         self._style()  # the UI font follows the language
         self._build()
+        self._show_update_notice()  # rebuilt in the new language
         if self.scan is not None:
             self._replan()
 
@@ -1207,6 +1226,7 @@ class App:
             "tag_filler_path": tk.StringVar(value=p.tag_filler_path),
         }
         self.set_pref = tk.StringVar(value=p.artist_name_preference)
+        self.set_update = tk.BooleanVar(value=p.update_check)
         frame = ttk.Frame(win, padding=(20, 16))
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
@@ -1245,6 +1265,9 @@ class App:
             ttk.Radiobutton(prefs_row, text=t(key), value=value, variable=self.set_pref,
                             style="Seg.Toolbutton").pack(side="left")
         row += 1
+        ttk.Checkbutton(frame, text=t("opt_update_check"), variable=self.set_update).grid(
+            row=row, column=0, columnspan=4, sticky="w", pady=(14, 0))
+        row += 1
         bar = ttk.Frame(frame)
         bar.grid(row=row, column=0, columnspan=4, sticky="we", pady=(18, 0))
         ttk.Button(bar, text=t("btn_save"), style="Accent.TButton", command=self._save_settings).pack(side="right")
@@ -1265,6 +1288,7 @@ class App:
         for var in self.set_vars.values():
             var.set("")
         self.set_pref.set("original")
+        self.set_update.set(True)
 
     def _save_settings(self) -> None:
         values = {k: v.get().strip() for k, v in self.set_vars.items()}
@@ -1282,12 +1306,57 @@ class App:
         p.fpcalc_path = values["fpcalc_path"]
         p.tag_filler_path = values["tag_filler_path"]
         p.artist_name_preference = self.set_pref.get()
+        p.update_check = bool(self.set_update.get())
+        if not p.update_check:
+            self._update_info = None
         prefs_mod.save(p)
         self.var_pref.set(p.artist_name_preference)
         self.settings_win.destroy()
         self._build()  # the dupes folder name shows on a button
+        self._show_update_notice()
         if self.source and os.path.isdir(self.source):
             self.load_source(self.source)  # a new dupes name changes what a scan skips
+
+    # ------------------------------------------------------------------ new version notice
+    def _on_update_result(self, info: update_check.UpdateInfo | None, answered: bool) -> None:
+        """Tk thread. The day is recorded only when the server answered, so an offline
+        start asks again next time."""
+        if self.frame is None or not self.frame.winfo_exists():
+            return  # the window is gone
+        if answered:
+            self.prefs.update_check_last = update_check.today()
+            prefs_mod.save(self.prefs)
+        if info is not None and self.prefs.update_check:
+            self._update_info = info
+            self._show_update_notice()
+
+    def _show_update_notice(self) -> None:
+        info = self._update_info
+        if info is None:
+            self.frm_update.pack_forget()
+            return
+        self.lbl_update.configure(text=t("update_available", latest=info.latest, current=info.current))
+        if not self.frm_update.winfo_manager():
+            # below the action bar: the body (table) gives up the height, the buttons stay put
+            self.frm_update.pack(side="bottom", fill="x", padx=20, pady=(0, 10), before=self._action_bar)
+
+    def _update_open(self) -> None:
+        """The tools page, never a download: the site serves the download."""
+        info = self._update_info
+        if info is not None and info.url.startswith(update_check.SITE):
+            try:
+                webbrowser.open(info.url)
+            except Exception:
+                pass
+        self._update_info = None
+        self._show_update_notice()
+
+    def _update_later(self) -> None:
+        if self._update_info is not None:
+            self.prefs.update_check_skipped = self._update_info.latest  # a newer one is shown again
+            prefs_mod.save(self.prefs)
+        self._update_info = None
+        self._show_update_notice()
 
     # ------------------------------------------------------------------ undo history window
     def _show_history(self) -> None:

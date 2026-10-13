@@ -218,6 +218,7 @@
 - C5. `importlib`으로 다른 저장소 모듈을 불러올 때 `sys.modules`에 등록하지 않아 dataclass 오류
 - C6. 테스트마다 `Tk()`를 새로 만들면 "Can't find a usable tk.tcl"로 간헐 실패 → 모듈 단위로 Tk 하나 공유
 - C7. 한 테스트가 통과했다고 끝내지 않는다: GUI 테스트는 3번 연속 돌려 간헐 실패를 확인
+- C8. 새 버전 확인을 넣자 GUI 테스트가 여는 창마다 1.5초 뒤 실제 서버(chaekgalpi.co.kr)로 요청을 보낼 상황이 됨(시험 설정은 매번 새것이라 "오늘 아직 안 물음") → `conftest.no_network`가 `update_check.check_async`를 감싸 가짜 응답을 넘김. `fetch`만 바꿔서는 안 막힘: `check_async(..., fetcher=fetch)`의 기본값은 함수를 정의할 때 묶임. 규칙: **외부로 나가는 기능을 넣으면 테스트 전체에서 먼저 막고, 막는 자리는 기본 인자가 아니라 호출되는 이름에서**
 
 ## D. 작업 방식 실수 (도구·환경)
 
