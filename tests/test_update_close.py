@@ -42,3 +42,39 @@ def test_closing_while_the_request_is_out_does_not_abort_tcl(tmp_path):
     p = subprocess.run([sys.executable, "-W", "ignore", str(script)], capture_output=True, timeout=120)
     out = (p.stdout + p.stderr).decode("utf-8", "replace")
     assert p.returncode == 0 and "survived" in out and "Tcl_AsyncDelete" not in out, out[-800:]
+
+
+CLOSE_WHILE_SCANNING = r"""
+import os, sys, tempfile, time
+sys.path.insert(0, {root!r})
+import i18n
+i18n._settings_path = os.path.join(tempfile.mkdtemp(), "settings.json")
+i18n.set_lang("en", persist=False)
+import tkinter as tk
+import gui, scan as scan_mod, update_check
+update_check.check_async = lambda *a, **k: False
+real = scan_mod.scan
+def slow(*a, **k):
+    time.sleep(1.5)          # the scan is still running when the window closes
+    return real(*a, **k)
+scan_mod.scan = slow
+folder = tempfile.mkdtemp()
+for _ in range(3):
+    root = gui.TkinterDnD.Tk() if gui._HAS_DND else tk.Tk()
+    app = gui.App(root, None)
+    app.load_source(folder)
+    root.after(500, root.destroy)            # 0.5 s into the scan
+    root.mainloop()
+    del app, root
+    time.sleep(2.0)          # the scan thread finishes with no window left
+print("survived")
+"""
+
+
+def test_closing_during_a_scan_does_not_abort_tcl(tmp_path):
+    """The same for the app's own jobs (LESSONS A36): a window closed while a folder is read."""
+    script = tmp_path / "close_while_scanning.py"
+    script.write_text(CLOSE_WHILE_SCANNING.format(root=ROOT), encoding="utf-8")
+    p = subprocess.run([sys.executable, "-W", "ignore", str(script)], capture_output=True, timeout=120)
+    out = (p.stdout + p.stderr).decode("utf-8", "replace")
+    assert p.returncode == 0 and "survived" in out and "Tcl_AsyncDelete" not in out, out[-800:]

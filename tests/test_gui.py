@@ -871,3 +871,65 @@ def test_update_notice_survives_a_language_switch_and_settings_can_turn_it_off(a
     assert i18n.load_settings()["update_check"] is False
     app._on_update_result(_info(), True)  # switched off: a late answer shows nothing
     assert not app.frm_update.winfo_manager()
+
+
+# ------------------------------------------------------------------ worker threads hold no Tk object (LESSONS A36)
+def _reaches_tk(obj, seen=None) -> object | None:
+    """The App, a Tk widget or a Tk variable reachable from a thread target through closures,
+    default values, nested functions and bound methods; None if there is none."""
+    import types
+
+    import gui
+
+    seen = seen if seen is not None else set()
+    if id(obj) in seen:
+        return None
+    seen.add(id(obj))
+    if isinstance(obj, (gui.App, tk.Misc, tk.Variable)):
+        return obj
+    if isinstance(obj, types.MethodType):
+        return _reaches_tk(obj.__self__, seen) or _reaches_tk(obj.__func__, seen)
+    if isinstance(obj, types.FunctionType):
+        for cell in obj.__closure__ or ():
+            try:
+                found = _reaches_tk(cell.cell_contents, seen)
+            except ValueError:  # an empty cell
+                continue
+            if found is not None:
+                return found
+        for value in (obj.__defaults__ or ()):
+            found = _reaches_tk(value, seen)
+            if found is not None:
+                return found
+    return None
+
+
+def test_no_worker_thread_holds_the_window(app, lib, dialogs, monkeypatch):
+    """A thread holding the App could drop the last reference after the window closed and
+    free Tk objects off the main thread (Tcl_AsyncDelete). Every job is checked."""
+    import threading
+
+    import gui
+
+    targets = []
+    real = threading.Thread
+
+    class Recording(real):
+        def __init__(self, *a, target=None, **k):
+            targets.append(target)
+            super().__init__(*a, target=target, **k)
+
+    monkeypatch.setattr(gui.threading, "Thread", Recording)
+    app.load_source(str(lib))        # scan
+    app.wait()                       # (then a plan on its own thread)
+    app._find_dupes()
+    app.wait()
+    app._run()
+    app.wait()
+    app.wait()
+    app._undo()
+    app.wait()
+    app.wait()
+    assert len(targets) >= 5
+    held = [(t.__qualname__, _reaches_tk(t)) for t in targets]
+    assert all(found is None for _, found in held), held

@@ -724,16 +724,18 @@ class App:
         excl = session.excludes(self.source, self.dest(), self.prefs)
         root = self.source
         opts = self.options()  # tk variables are read here, never on the worker thread
+        # the worker gets these, never `self` (LESSONS A35/A36)
+        q, cancel, cache, prefs = self.queue, self.cancel, self.tag_cache, dataclass_copy(self.prefs)
 
         def work():
-            res = scan_mod.scan(root, excl, progress=lambda d, n: self.queue.put(("progress", d, n, "msg_reading")),
-                                cancel=self.cancel, cache=self.tag_cache)
+            res = scan_mod.scan(root, excl, progress=lambda d, n: q.put(("progress", d, n, "msg_reading")),
+                                cancel=cancel, cache=cache)
             if res.cancelled:
                 return ("scanned", None)
-            index, err = session.make_index(res.tracks, self.prefs, session.existing_folders(res, opts.dest))
+            index, err = session.make_index(res.tracks, prefs, session.existing_folders(res, opts.dest))
             pref = session.preferred_paths(res, opts, index)
-            groups = dedupe.find(res.tracks, index.rep, preferred=pref, cancel=self.cancel,
-                                 progress=lambda ph, d, n: self.queue.put(("progress", d, n, "msg_hashing")))
+            groups = dedupe.find(res.tracks, index.rep, preferred=pref, cancel=cancel,
+                                 progress=lambda ph, d, n: q.put(("progress", d, n, "msg_hashing")))
             # every group is applied: its recommendation already keeps one file per album
             return ("scanned", (res, index, err, groups))
 
@@ -784,11 +786,13 @@ class App:
         self._status_before_plan = self.lbl_status.cget("text")
         self.lbl_status.configure(text=t("msg_planning"))
 
+        q = self.queue  # the worker never holds `self` (LESSONS A36)
+
         def work():
             try:
-                self.queue.put(("planned", gen, plan_mod.build(scan, opts, index, groups, overrides)))
+                q.put(("planned", gen, plan_mod.build(scan, opts, index, groups, overrides)))
             except Exception as exc:  # keep the GUI alive and say what happened
-                self.queue.put(("planned", gen, exc))
+                q.put(("planned", gen, exc))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1070,10 +1074,11 @@ class App:
             return
         tracks, index = self.scan.tracks, self.index
         pref = session.preferred_paths(self.scan, self.options(), index)
+        q, cancel = self.queue, self.cancel  # the worker never holds `self` (LESSONS A36)
 
         def work():
-            groups = dedupe.find(tracks, index.rep, fingerprint=fp, fpcalc=exe, preferred=pref, cancel=self.cancel,
-                                 progress=lambda ph, d, n: self.queue.put(("progress", d, n, f"msg_{'fingerprinting' if ph == 'fingerprint' else 'hashing'}")))
+            groups = dedupe.find(tracks, index.rep, fingerprint=fp, fpcalc=exe, preferred=pref, cancel=cancel,
+                                 progress=lambda ph, d, n: q.put(("progress", d, n, f"msg_{'fingerprinting' if ph == 'fingerprint' else 'hashing'}")))
             return ("dupes", groups)
 
         self._start(work, "msg_hashing")
@@ -1161,11 +1166,12 @@ class App:
         if not messagebox.askokcancel(t("btn_run"), msg):
             return
         the_plan = self.plan
+        q, cancel = self.queue, self.cancel  # the worker never holds `self` (LESSONS A36)
 
         def work():
             try:
-                res = mover.execute(the_plan, progress=lambda d, n: self.queue.put(("progress", d, n, "msg_moving")),
-                                    cancel=self.cancel)
+                res = mover.execute(the_plan, progress=lambda d, n: q.put(("progress", d, n, "msg_moving")),
+                                    cancel=cancel)
             except OSError as exc:  # the log could not be written: nothing was moved
                 raise RuntimeError(t("err_log_write", path=mover.log_path_for(the_plan.options.dest), error=exc)) from exc
             return ("ran", res)
@@ -1197,10 +1203,11 @@ class App:
 
     def _undo_run(self, run: undo_mod.RunInfo) -> None:
         logs = self._known_logs()
+        q, cancel = self.queue, self.cancel  # the worker never holds `self` (LESSONS A36)
 
         def work():
-            return ("undone", undo_mod.undo(run.log, progress=lambda d, n: self.queue.put(("progress", d, n, "msg_undoing")),
-                                            cancel=self.cancel, run_id=run.id, other_logs=logs), run.source)
+            return ("undone", undo_mod.undo(run.log, progress=lambda d, n: q.put(("progress", d, n, "msg_undoing")),
+                                            cancel=cancel, run_id=run.id, other_logs=logs), run.source)
 
         self._start(work, "msg_undoing")
 
@@ -1542,11 +1549,16 @@ class App:
         self.lbl_status.configure(text=t(status_key))
         self.progress.configure(value=0, maximum=1)
 
+        q = self.queue
+
+        # Only plain objects cross into the thread (the queue, the cancel event, copies):
+        # a thread holding the App or a Tk object could drop the last reference to it after
+        # the window closed, freeing Tk objects off the main thread (LESSONS A35/A36).
         def runner():
             try:
-                self.queue.put(work())
+                q.put(work())
             except Exception as exc:  # keep the GUI alive and say what happened
-                self.queue.put(("error", exc))
+                q.put(("error", exc))
 
         threading.Thread(target=runner, daemon=True).start()
 
