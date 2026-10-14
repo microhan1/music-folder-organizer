@@ -1350,9 +1350,10 @@ class App:
     def _update_open(self) -> None:
         """The tools page, never a download: the site serves the download."""
         info = self._update_info
-        if info is not None and info.url.startswith(update_check.SITE):
+        page = update_check.page_for(info, i18n.current_lang()) if info is not None else ""
+        if page.startswith(update_check.SITE):  # the English page for a non-Korean screen
             try:
-                webbrowser.open(info.url)
+                webbrowser.open(page)
             except Exception:
                 pass
         self._update_info = None

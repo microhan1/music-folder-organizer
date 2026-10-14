@@ -933,3 +933,21 @@ def test_no_worker_thread_holds_the_window(app, lib, dialogs, monkeypatch):
     assert len(targets) >= 5
     held = [(t.__qualname__, _reaches_tk(t)) for t in targets]
     assert all(found is None for _, found in held), held
+
+
+def test_update_button_opens_the_english_page_unless_the_screen_is_korean(app, monkeypatch):
+    import dataclasses
+    import webbrowser
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    en = "https://chaekgalpi.co.kr/en/tools/musicfolder?utm_source=app"
+    app._on_update_result(dataclasses.replace(_info(), url_en=en), True)
+    app._update_open()                               # the tests run on an English screen
+    app.var_lang.set(i18n.LANG_NAMES["ko"])
+    app._on_lang()
+    app._on_update_result(dataclasses.replace(_info(), url_en=en), True)
+    app._update_open()
+    assert opened == [en, _info().url]
+    app.var_lang.set(i18n.LANG_NAMES["en"])
+    app._on_lang()

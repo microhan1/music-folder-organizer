@@ -218,3 +218,26 @@ def test_the_thread_holds_no_tk_object(monkeypatch):
     target = captured["target"]
     held = [c.cell_contents for c in (target.__closure__ or ())] + list(target.__defaults__ or ())
     assert not any(x is root or x is on_result for x in held)
+
+
+# ------------------------------------------------------------------ which tools page [Update] opens
+EN = "https://chaekgalpi.co.kr/en/tools/musicfolder?utm_source=app"
+
+
+@pytest.mark.parametrize("lang, url_en, expect", [
+    ("ko", EN, "url"),                                    # a Korean screen: the Korean page
+    ("en", EN, "en"),                                     # other languages: the English page
+    ("ja", EN, "en"),
+    ("zh-CN", EN, "en"),
+    ("en", None, "url"),                                  # the server has none (before v1.96)
+    ("en", "missing", "url"),
+    ("en", "https://evil.example/en/tools", "url"),       # never another site
+    ("en", "http://chaekgalpi.co.kr/en/tools/x", "url"),
+    ("en", 5, "url"),
+])
+def test_update_opens_the_english_page_on_a_non_korean_screen(lang, url_en, expect):
+    data = dict(OK)
+    if url_en != "missing":
+        data["urlEn"] = url_en
+    info = uc.interpret(data, "0.4.4")
+    assert uc.page_for(info, lang) == (EN if expect == "en" else OK["url"])
