@@ -20,6 +20,7 @@ API = "https://chaekgalpi.co.kr/api/tools/{slug}/latest"
 SITE = "https://chaekgalpi.co.kr/"  # the notice only ever opens a page on this site
 TIMEOUT = 4.0
 DELAY_MS = 1500
+POLL_MS = 100  # how often the Tk thread looks for the answer
 MAX_BYTES = 64 * 1024
 
 
@@ -79,17 +80,29 @@ def check_async(root, slug: str, version: str, prefs, on_result: Callable[[Updat
     if not should_check(prefs, day or today()):
         return False
     skipped = getattr(prefs, "update_check_skipped", "")
+    box: dict = {}
 
-    def work() -> None:
-        data = fetcher(slug, version)
-        info = interpret(data, version, skipped)
-        try:
-            root.after(0, lambda: on_result(info, data is not None))
-        except Exception:  # the window was closed meanwhile
-            pass
+    # The thread only fetches into `box` and holds no Tk object. It used to hand the
+    # result over with root.after(..., on_result): then a window closed while the
+    # request was out left the thread with the last reference to the App, its Tk
+    # variables could be freed off the main thread and Tcl aborted ("Tcl_AsyncDelete:
+    # async handler deleted by the wrong thread", LESSONS A35). The Tk thread polls instead.
+    def work(box=box) -> None:
+        box["data"] = fetcher(slug, version)
+
+    def poll() -> None:
+        if "data" not in box:
+            try:
+                root.after(POLL_MS, poll)
+            except Exception:  # the window was closed meanwhile
+                pass
+            return
+        data = box["data"]
+        on_result(interpret(data, version, skipped), data is not None)
 
     def start() -> None:
         threading.Thread(target=work, name="update-check", daemon=True).start()
+        poll()
 
     try:
         root.after(DELAY_MS, start)

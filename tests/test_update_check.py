@@ -101,7 +101,7 @@ def test_waits_one_and_a_half_seconds_first(inline_threads):
 
 
 def test_the_app_sends_its_own_slug_and_version():
-    assert SLUG == "musicfolder" and APP_VERSION == "0.4.2"
+    assert SLUG == "musicfolder" and APP_VERSION == "0.4.3"
     import gui
 
     assert gui.UPDATE_SLUG == SLUG
@@ -192,3 +192,29 @@ def test_settings_are_type_checked(monkeypatch):
                                                         "update_check_skipped": ["0.4.3"]})
     p = prefs_mod.load()
     assert p.update_check is True and p.update_check_last == "" and p.update_check_skipped == ""
+
+
+def test_the_thread_holds_no_tk_object(monkeypatch):
+    """The fetch thread must not keep the window or the App alive: if it held the last
+    reference, Tk objects could be freed off the main thread and Tcl aborts (LESSONS A35)."""
+    captured = {}
+
+    class CaptureThread:
+        def __init__(self, target, name=None, daemon=None):
+            captured["target"] = target
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(uc.threading, "Thread", CaptureThread)
+
+    class Root:
+        def after(self, ms, fn):
+            if ms == uc.DELAY_MS:
+                fn()
+
+    root, on_result = Root(), lambda info, answered: None
+    uc.check_async(root, SLUG, "0.4.3", prefs_mod.Prefs(), on_result, fetcher=lambda s, v: OK, day=DAY)
+    target = captured["target"]
+    held = [c.cell_contents for c in (target.__closure__ or ())] + list(target.__defaults__ or ())
+    assert not any(x is root or x is on_result for x in held)
