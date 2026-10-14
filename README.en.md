@@ -14,6 +14,7 @@ A Windows tool that takes music scattered across `Downloads/New folder/New folde
 ## Download
 
 - **Executable**: get `music-folder-organizer.exe` from [Releases](https://github.com/microhan1/music-folder-organizer/releases) and double-click it. Nothing to install. (The exe is unsigned; if SmartScreen warns, choose "More info → Run anyway".)
+- **Tools page** (in English): [chaekgalpi.co.kr/en/tools/musicfolder](https://chaekgalpi.co.kr/en/tools/musicfolder?utm_source=github&utm_medium=referral&utm_campaign=tool_cta&utm_content=musicfolder) — the 책갈피 reading-log service itself is in Korean.
 - **From source** (Python 3.12):
 
 ```bash
