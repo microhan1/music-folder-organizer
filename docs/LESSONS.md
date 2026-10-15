@@ -230,6 +230,7 @@
 - C6. 테스트마다 `Tk()`를 새로 만들면 "Can't find a usable tk.tcl"로 간헐 실패 → 모듈 단위로 Tk 하나 공유
 - C7. 한 테스트가 통과했다고 끝내지 않는다: GUI 테스트는 3번 연속 돌려 간헐 실패를 확인
 - C8. 새 버전 확인을 넣자 GUI 테스트가 여는 창마다 1.5초 뒤 실제 서버(chaekgalpi.co.kr)로 요청을 보낼 상황이 됨(시험 설정은 매번 새것이라 "오늘 아직 안 물음") → `conftest.no_network`가 `update_check.check_async`를 감싸 가짜 응답을 넘김. `fetch`만 바꿔서는 안 막힘: `check_async(..., fetcher=fetch)`의 기본값은 함수를 정의할 때 묶임. 규칙: **외부로 나가는 기능을 넣으면 테스트 전체에서 먼저 막고, 막는 자리는 기본 인자가 아니라 호출되는 이름에서**
+- C9. (2026-10-15, 짝 도구 photo-organizer에서 시험이 운영 서버를 511번 친 사고 → 12개 도구 점검) 이 저장소는 C8 덕분에 가짜 urlopen으로 센 결과 0건(자식 프로세스 시험도 가짜 응답·확인 끔). 그래도 C8의 "모듈 속성 감싸기"는 다른 진입점(인자 없는 `fetch()`, `urllib.request.urlopen`)을 못 막으므로 `conftest.no_network`를 **기본 인자 자체(`__kwdefaults__`)와 `urlopen`을 가드로 바꾸고, 기록이 남으면 그 시험을 실패**시키는 방식으로 강화. 검사 시험 `test_the_tests_never_reach_the_server`. 규칙: **나가는 길은 모두 막고, 막힌 기록이 생기면 시험이 실패해야 한다(조용히 막기만 하면 새 구멍을 모름)**
 
 ## D. 작업 방식 실수 (도구·환경)
 

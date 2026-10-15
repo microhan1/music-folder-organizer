@@ -22,20 +22,38 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     yield
 
 
+class NetworkLog(list):
+    """Requests a test tried to send (blocked). Any entry fails that test at teardown."""
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    """Every App the tests open schedules an update check: never let it reach the real server.
-    (check_async binds its default fetcher when defined, so the function itself is wrapped; a
-    test that passes its own fetcher keeps it.)"""
+    """Every App the tests open schedules an update check (settings are fresh, so "not asked
+    today" always holds): never let one reach the real server and the tools site's statistics
+    (photo-organizer counted 511 such requests in two days; LESSONS C8/C9).
+
+    The defaults are bound when the functions are defined, so a module attribute patch alone
+    would not hold: check_async's default fetcher becomes "no answer", and fetch's default
+    opener and urllib.request.urlopen itself become a guard that records the URL and raises
+    URLError. A test that passes its own fetcher/opener keeps it. A recorded request fails
+    the test at teardown."""
+    import urllib.error
+    import urllib.request
+
     import update_check
 
-    real = update_check.check_async
+    log = NetworkLog()
 
-    def offline(*args, **kwargs):
-        kwargs.setdefault("fetcher", lambda slug, version: None)
-        return real(*args, **kwargs)
+    def guard(req, *args, **kwargs):
+        log.append(req.full_url if hasattr(req, "full_url") else str(req))
+        raise urllib.error.URLError("blocked in tests (conftest.no_network)")
 
-    monkeypatch.setattr(update_check, "check_async", offline)
+    monkeypatch.setitem(update_check.check_async.__kwdefaults__, "fetcher", lambda slug, version: None)
+    monkeypatch.setitem(update_check.fetch.__kwdefaults__, "opener", guard)
+    monkeypatch.setattr(urllib.request, "urlopen", guard)
+    yield log
+    if log:
+        pytest.fail(f"a test tried to reach the network: {log}")
 
 
 def sample(name: str) -> str:

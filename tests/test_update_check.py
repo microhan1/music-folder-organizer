@@ -241,3 +241,16 @@ def test_update_opens_the_english_page_on_a_non_korean_screen(lang, url_en, expe
         data["urlEn"] = url_en
     info = uc.interpret(data, "0.4.4")
     assert uc.page_for(info, lang) == (EN if expect == "en" else OK["url"])
+
+
+# ------------------------------------------------------------------ the tests' own network block (LESSONS C9)
+def test_the_tests_never_reach_the_server(no_network):
+    """conftest.no_network: the default opener and urlopen are a recording guard, and the
+    default fetcher of check_async answers nothing, so an App opened by a test cannot ask."""
+    import urllib.request
+
+    assert uc.fetch.__kwdefaults__["opener"] is urllib.request.urlopen  # both are the guard
+    assert uc.fetch(SLUG, "0.4.4") is None  # no opener given: blocked, silent
+    assert no_network == ["https://chaekgalpi.co.kr/api/tools/musicfolder/latest?v=0.4.4&os=win"]
+    assert uc.check_async.__kwdefaults__["fetcher"](SLUG, "0.4.4") is None
+    no_network.clear()  # recorded on purpose here; any other record fails its test
