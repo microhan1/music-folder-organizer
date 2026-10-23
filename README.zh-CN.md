@@ -43,6 +43,7 @@ python main.py
 
 - `{album_artist|artist}/{album}/{track:02} - {title}` (默认)
 - `{album_artist|artist}/{album}/{disc}-{track:02} - {title}` (仅多碟专辑为 `2-05 - 标题`)
+- `{album_artist|artist}/[{year}] {album}/{disc}-{track:02} - {title}` (`[1984] 专辑`)
 - `{artist}/{title}`
 - `{year}/{artist} - {title}`
 
@@ -53,7 +54,7 @@ python main.py
 | `{album}` | 专辑 |
 | `{title}` | 标题(为空时用原文件名) |
 | `{track}`, `{track:02}` | 音轨号(`:02` = 两位数)。标签为空时取文件名开头的数字 |
-| `{disc}` | 碟片号。仅在同一专辑有 2 张及以上碟片时出现，单碟专辑中连同旁边的分隔符一起省略 |
+| `{disc}` | 碟片号。仅在同一专辑有 2 张及以上碟片时出现，单碟专辑中连同旁边的分隔符一起省略。使用此占位符时，专辑名末尾的 `[Disc 1]`、`(CD2)`、`- Disc 3` 等标记会被去掉，并把其中的数字当作碟片号(与碟片标签不一致时保持原样) — 套装会汇集到同一个专辑文件夹 |
 | `{year}` | 年份(四位) |
 | `{genre}` | 流派 |
 | `{artist_sort}` | 歌手排序名(用拉丁字母文件夹整理日文、中文歌手) |

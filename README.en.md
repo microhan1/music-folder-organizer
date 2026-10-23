@@ -44,6 +44,7 @@ Pick a preset or type your own. The placeholder buttons under the box insert at 
 
 - `{album_artist|artist}/{album}/{track:02} - {title}` (default)
 - `{album_artist|artist}/{album}/{disc}-{track:02} - {title}` (`2-05 - Title` on multi-disc albums only)
+- `{album_artist|artist}/[{year}] {album}/{disc}-{track:02} - {title}` (`[1984] Album`)
 - `{artist}/{title}`
 - `{year}/{artist} - {title}`
 
@@ -54,7 +55,7 @@ Pick a preset or type your own. The placeholder buttons under the box insert at 
 | `{album}` | album |
 | `{title}` | title (the original file name when empty) |
 | `{track}`, `{track:02}` | track number (`:02` = two digits); the file name's leading number when the tag is empty |
-| `{disc}` | disc number; only on albums with two or more discs, otherwise it disappears with the separator next to it |
+| `{disc}` | disc number; only on albums with two or more discs, otherwise it disappears with the separator next to it. When a pattern uses it, a trailing mark such as `[Disc 1]`, `(CD2)` or `- Disc 3` in the album name is removed and its number is used as the disc number (left alone if it disagrees with the disc tag), so a box set gathers in one album folder |
 | `{year}` | year (four digits) |
 | `{genre}` | genre |
 | `{artist_sort}` | artist sort name (Latin-letter folders for Japanese or Chinese artists) |

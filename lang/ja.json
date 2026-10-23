@@ -7,6 +7,7 @@
   "dupe_cross": "アルバム {count} 枚",
   "cli_dedupe_across": "別のアルバムに入っている同じ曲も 1 つだけ残す (--dedupe を含む)",
   "btn_open_tag_filler": "音楽情報フィラーで開く",
+  "btn_disc_rule": "複数枚のアルバム {count} 件 · ディスク番号の規則へ",
   "dlg_pick_tag_filler": "音楽情報フィラー (music-tag-filler.exe) を選んでください",
   "msg_tag_filler_started": "音楽情報フィラーで {count} 件のファイルを開きました。そのウィンドウを閉じると、ここでタグを読み直します。",
   "msg_tag_filler_skipped": "(wav・wma など {count} 件は音楽情報フィラーが扱わないため除きました)",

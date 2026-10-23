@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
+import re
 from collections import Counter
 
 import i18n
@@ -82,6 +83,7 @@ class Plan:
     items: list[Item]
     companions: list[Companion]
     empty_dirs: list[str]
+    disc_albums: int = 0  # multi-disc albums, counted when the pattern has no "{disc}" (a hint to use one)
 
     def summary(self) -> dict[str, int]:
         return {
@@ -106,6 +108,11 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
     """``overrides`` maps key_of(path) -> checked, the user's checkbox clicks."""
     overrides = overrides or {}
     artist_map = index.rep if index is not None else (lambda s: s)
+    uses_disc = "disc" in pattern_mod.placeholders_in(opts.pattern)
+    if uses_disc:
+        # "Box [Disc 2]" is the album "Box", disc 2 - for planning only; the tags stay as they are. Without
+        # "{disc}" in the pattern nothing changes, so folders made by an earlier run are not moved again.
+        scan = dataclasses.replace(scan, tracks=[t.disc_view() for t in scan.tracks])
     removable: dict[str, int] = {}
     for g in groups or []:
         if not g.applied:
@@ -161,7 +168,8 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
             break
         release |= stranded
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
-    return Plan(opts, items, companions, empty)
+    hint = 0 if uses_disc else len(multi_disc_albums([t.disc_view() for t in scan.tracks], artist_map))
+    return Plan(opts, items, companions, empty, hint)
 
 
 def _cue_travels(item: Item, companions: list[Companion]) -> bool:
@@ -240,11 +248,22 @@ def _fallback_names(key: str) -> frozenset[str]:
     return frozenset(i18n.all_values(f"fallback_{key}"))
 
 
+def _stand_in_in(part: str, names: frozenset[str]) -> str | None:
+    """The stand-in name a folder or file-name part carries: the part itself, or the name standing on its
+    own inside it ("[Unknown Year] Album One" from a pattern like "[{year}] {album}")."""
+    if part in names:
+        return part
+    for name in sorted(names, key=len, reverse=True):
+        if name and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", part):
+            return name
+    return None
+
+
 def _stable_fallbacks(item: Item, opts: Options) -> dict:
     """Stand-in names come from the language file, so switching the language would send every file in an
     "Unknown Album" folder to "不明なアルバム" on the next run. A track that already sits in a folder with
-    a stand-in name (any language), or has one in front of " - " in its file name, keeps that name. A
-    text typed in Settings never changes with the language and is left alone."""
+    a stand-in name (any language, alone or inside the folder name), or has one in front of " - " in its
+    file name, keeps that name. A text typed in Settings never changes with the language and is left alone."""
     result = opts.fallbacks
     try:
         rel = os.path.relpath(item.track.folder, opts.dest)
@@ -259,7 +278,8 @@ def _stable_fallbacks(item: Item, opts: Options) -> dict:
     for key, current in opts.fallbacks.items():
         if current != i18n.t(f"fallback_{key}"):
             continue  # typed by the user
-        found = next((p for p in parts if p in _fallback_names(key)), None)
+        names = _fallback_names(key)
+        found = next((hit for p in sorted(parts) if (hit := _stand_in_in(p, names))), None)
         if found and found != current:
             result = {**result, key: found}
     return result

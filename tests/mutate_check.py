@@ -55,6 +55,15 @@ MUTATIONS = [
     ("file name prefixes count as existing names", "session.py",
      "            names.add_name(stem.split(\" - \")[0].strip())", "            pass",
      "tests/test_cases.py -k artist_case_variant"),
+    ("a stand-in name inside a folder name is kept", "plan.py",
+     "    if part in names:\n        return part\n    for name in sorted(names, key=len, reverse=True):",
+     "    return part if part in names else None\n    for name in sorted(names, key=len, reverse=True):",
+     "tests/test_pattern_helper.py -k stand_in_year"),
+    ("a disc mark is read only when the pattern has {disc}", "plan.py", "    if uses_disc:\n        # ",
+     "    if True:\n        # ", "tests/test_disc_marks.py -k default_pattern_is_unchanged"),
+    ("a disc mark that disagrees with the disc tag is left alone", "scan.py",
+     "        if parts[0].isdigit() and int(parts[0]) == number:\n            return m.group(\"base\").strip(), disc\n        return album, disc",
+     "        return m.group(\"base\").strip(), disc", "tests/test_disc_marks.py -k disc_tag_decides"),
 ]
 
 

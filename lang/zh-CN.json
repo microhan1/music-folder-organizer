@@ -7,6 +7,7 @@
   "dupe_cross": "{count} 张专辑",
   "cli_dedupe_across": "不同专辑中的同一首歌也只保留一个 (包含 --dedupe)",
   "btn_open_tag_filler": "用“音乐信息填充”打开",
+  "btn_disc_rule": "多碟专辑 {count} 张 · 改用碟号规则",
   "dlg_pick_tag_filler": "请选择“音乐信息填充”(music-tag-filler.exe)",
   "msg_tag_filler_started": "已在“音乐信息填充”中打开 {count} 个文件。关闭那个窗口后，这里会重新读取标签。",
   "msg_tag_filler_skipped": "(wav、wma 等 {count} 个文件不受“音乐信息填充”支持，已排除)",

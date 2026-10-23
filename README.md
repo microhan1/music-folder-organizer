@@ -43,6 +43,7 @@ python main.py
 
 - `{album_artist|artist}/{album}/{track:02} - {title}` (기본)
 - `{album_artist|artist}/{album}/{disc}-{track:02} - {title}` (2장 이상인 앨범만 `2-05 - 제목`)
+- `{album_artist|artist}/[{year}] {album}/{disc}-{track:02} - {title}` (`[1984] 앨범`)
 - `{artist}/{title}`
 - `{year}/{artist} - {title}`
 
@@ -53,7 +54,7 @@ python main.py
 | `{album}` | 앨범 |
 | `{title}` | 제목 (비면 원래 파일명) |
 | `{track}`, `{track:02}` | 트랙 번호 (`:02` = 두 자리). 태그가 비면 파일명 앞 숫자 |
-| `{disc}` | 디스크 번호. 같은 앨범에 디스크가 2장 이상일 때만 들어가고, 1장짜리 앨범에서는 옆의 구분자와 함께 빠짐 |
+| `{disc}` | 디스크 번호. 같은 앨범에 디스크가 2장 이상일 때만 들어가고, 1장짜리 앨범에서는 옆의 구분자와 함께 빠짐. 이 치환자를 쓰면 앨범 이름 끝의 `[Disc 1]`·`(CD2)`·`- Disc 3` 같은 표시를 떼고 그 숫자를 디스크 번호로 씁니다(디스크 태그와 다르면 그대로 둠) — 박스 세트가 한 앨범 폴더로 모입니다 |
 | `{year}` | 연도 (네 자리) |
 | `{genre}` | 장르 |
 | `{artist_sort}` | 정렬용 가수 이름 (일본어·중국어 가수를 로마자 폴더로) |

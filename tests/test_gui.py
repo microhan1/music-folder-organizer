@@ -951,3 +951,31 @@ def test_update_button_opens_the_english_page_unless_the_screen_is_korean(app, m
     assert opened == [en, _info().url]
     app.var_lang.set(i18n.LANG_NAMES["en"])
     app._on_lang()
+
+
+# ------------------------------------------------------------------ v0.5.0 item 1: disc marks and the hint button
+def _box(root):
+    for d in (1, 2, 3):
+        put(root, "song-128.mp3" if d % 2 else "other.mp3", f"box/Disc {d}/1.mp3", title=f"T{d}", artist="X",
+            album=f"Box [Disc {d}]", tracknumber="1")
+
+
+def test_disc_hint_button_offers_the_disc_rule_and_merges_the_discs(app, tmp_path):
+    root = tmp_path / "boxes"
+    _box(root)
+    app.load_source(str(root))
+    app.wait()
+    assert app.btn_disc_rule.winfo_manager() == "pack"          # the default pattern has no {disc}
+    assert "1" in app.btn_disc_rule.cget("text") and "Multi-disc" in app.btn_disc_rule.cget("text")
+    assert len({os.path.dirname(i.dst) for i in app.plan.items}) == 3  # three "[Disc n]" folders as before
+    app._use_disc_rule()
+    app.wait()
+    assert app.btn_disc_rule.winfo_manager() == ""               # the rule has {disc} now: no hint
+    assert sorted(os.path.relpath(i.dst, str(root)) for i in app.plan.items) == [
+        os.path.join("X", "Box", f"{d}-01 - T{d}.mp3") for d in (1, 2, 3)]
+
+
+def test_disc_hint_button_is_absent_without_multi_disc_albums(app, lib):
+    app.load_source(str(lib))
+    app.wait()
+    assert app.btn_disc_rule.winfo_manager() == ""

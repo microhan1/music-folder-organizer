@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import concurrent.futures
 import re
 import threading
 from typing import Callable
@@ -52,6 +53,36 @@ class TagSet:
     compilation: bool = False
 
 
+_DISC_WORD = r"(?:disc|disk|cd|디스크|ディスク|碟)"
+# a disc mark at the very end of an album name, and only there; the album must keep a name of its own
+_DISC_MARKS = (
+    re.compile(rf"^(?P<base>.*\S)\s*[\[\(（【]\s*{_DISC_WORD}\s*[-_.]?\s*(?P<n>\d{{1,2}})\s*[\]\)）】]\s*$", re.IGNORECASE),
+    re.compile(rf"^(?P<base>.*\S)\s*[-–—:]\s*{_DISC_WORD}\s*[-_.]?\s*(?P<n>\d{{1,2}})\s*$", re.IGNORECASE),
+    re.compile(rf"^(?P<base>.*\S)\s+{_DISC_WORD}\s*[-_.]?\s*(?P<n>\d{{1,2}})\s*$", re.IGNORECASE),
+)
+
+
+def split_disc_mark(album: str, disc: str = "") -> tuple[str, str]:
+    """("Box [Disc 2]", "") -> ("Box", "2"): the album name without a trailing disc mark, and the disc
+    number to use. The mark's number is taken only when the disc tag is empty or says the same; a tag
+    that disagrees (or is not a number) leaves the album as it is: nothing is guessed against a tag."""
+    name = (album or "").strip()
+    for rx in _DISC_MARKS:
+        m = rx.match(name)
+        if m is None:
+            continue
+        number = int(m.group("n"))
+        if number < 1:
+            return album, disc
+        parts = [p.strip() for p in (disc or "").split("/")]
+        if not parts[0]:
+            return m.group("base").strip(), str(number)
+        if parts[0].isdigit() and int(parts[0]) == number:
+            return m.group("base").strip(), disc
+        return album, disc
+    return album, disc
+
+
 @dataclasses.dataclass
 class Track:
     path: str
@@ -77,6 +108,15 @@ class Track:
 
     def is_untagged(self) -> bool:
         return not self.tags.title or not (self.tags.artist or self.tags.album_artist)
+
+    def disc_view(self) -> "Track":
+        """This track as the folder pattern sees it when "{disc}" is in use: the album name without a
+        trailing disc mark and the disc number the mark gave. The same object when there is no mark.
+        Only a copy for planning: the file's tags are never written."""
+        album, disc = split_disc_mark(self.tags.album, self.tags.disc)
+        if album == self.tags.album and disc == self.tags.disc:
+            return self
+        return dataclasses.replace(self, tags=dataclasses.replace(self.tags, album=album, disc=disc))
 
 
 @dataclasses.dataclass
@@ -151,11 +191,29 @@ class TagCache:
         self.hits = hits
 
 
+READ_WORKERS = min(8, os.cpu_count() or 4)  # tags are read by this many threads: the waits for the disk overlap
+PARALLEL_FROM = 64  # fewer files than this are read one by one: starting threads would not pay
+
+
+def _load(path: str, cache: TagCache | None) -> tuple[os.stat_result | None, Track, bool]:
+    """(stat, track, reused): one file, from the cache when it is unchanged, else read. Runs on a reader
+    thread: it touches only the file and the cache's dict (read only while a scan runs), never a window."""
+    try:
+        st = os.stat(fs(path))
+    except OSError:
+        st = None
+    track = cache.get(path, st) if (cache is not None and st is not None) else None
+    if track is not None:
+        return st, track, True
+    return st, read_track(path, st), False
+
+
 def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | None = None,
          cancel: threading.Event | None = None, cache: TagCache | None = None) -> ScanResult:
     """Every music file under root (sorted), with tags. ``exclude`` lists folders
     whose subtree is skipped (the dupes folder, a destination inside root).
-    With ``cache``, unchanged files are not opened again (see TagCache)."""
+    With ``cache``, unchanged files are not opened again (see TagCache). Big folders are read by several
+    threads; the tracks stay in file order."""
     root = os.path.abspath(root)
     skip = {key_of(p) for p in (exclude or [])}
     dirs: dict[str, DirInfo] = {}
@@ -175,23 +233,25 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
     total = len(audio)
     seen: dict[tuple, tuple[int, int, Track]] = {}
     hits = 0
-    for i, path in enumerate(audio):
-        if cancel is not None and cancel.is_set():
-            return ScanResult(root, tracks, dirs, cancelled=True)  # the cache stays as it was
-        try:
-            st = os.stat(fs(path))
-        except OSError:
-            st = None
-        track = cache.get(path, st) if (cache is not None and st is not None) else None
-        if track is None:
-            track = read_track(path, st)
+    pool = concurrent.futures.ThreadPoolExecutor(READ_WORKERS) if (total >= PARALLEL_FROM and READ_WORKERS > 1) else None
+    try:
+        if pool is not None:
+            futures = [pool.submit(_load, path, cache) for path in audio]
+            loaded = (f.result() for f in futures)  # in file order, whichever thread finishes first
         else:
-            hits += 1
-        if cache is not None and st is not None and not track.error:
-            seen[cache.key(path, st)] = (st.st_size, st.st_mtime_ns, track)
-        tracks.append(track)
-        if progress is not None and (i % 25 == 0 or i + 1 == total):
-            progress(i + 1, total)
+            loaded = (_load(path, cache) for path in audio)
+        for i, (path, (st, track, reused)) in enumerate(zip(audio, loaded)):
+            if cancel is not None and cancel.is_set():
+                return ScanResult(root, tracks, dirs, cancelled=True)  # the cache stays as it was
+            hits += reused
+            if cache is not None and st is not None and not track.error:
+                seen[cache.key(path, st)] = (st.st_size, st.st_mtime_ns, track)
+            tracks.append(track)
+            if progress is not None and (i % 25 == 0 or i + 1 == total):
+                progress(i + 1, total)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)  # on a cancel the queued files are dropped
     if cache is not None:
         cache.add(seen, hits)
     return ScanResult(root, tracks, dirs)

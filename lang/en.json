@@ -7,6 +7,7 @@
   "dupe_cross": "{count} albums",
   "cli_dedupe_across": "also keep only one copy when the same song is on different albums (implies --dedupe)",
   "btn_open_tag_filler": "Open in Music Tag Filler",
+  "btn_disc_rule": "Multi-disc albums: {count} · Use disc numbers",
   "dlg_pick_tag_filler": "Choose Music Tag Filler (music-tag-filler.exe)",
   "msg_tag_filler_started": "Opened {count} files in Music Tag Filler. Close that window and the tags are read again here.",
   "msg_tag_filler_skipped": "({count} files such as wav or wma were left out: Music Tag Filler does not handle them)",

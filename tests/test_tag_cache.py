@@ -193,3 +193,67 @@ def test_fingerprints_are_kept_and_failures_retried(tmp_path, monkeypatch):
     fail.clear()
     dedupe.find(scan_mod.scan(str(tmp_path), cache=cache).tracks, fingerprint=True, fpcalc="fpcalc")
     assert runs == [str(tmp_path / "in" / "2.ogg")]  # only the one that failed last time
+
+
+# ------------------------------------------------------------------ v0.5.0 item 3: several threads read the tags
+def _many(root, n=120):
+    for i in range(n):
+        put(root, "tone.ogg", f"d{i % 7}/{i:03}.ogg", title=f"T{i}", artist=f"A{i % 5}", album="B", tracknumber=str(i % 12 + 1))
+
+
+def test_threaded_scan_gives_the_same_tracks_in_the_same_order(tmp_path, monkeypatch):
+    _many(tmp_path)
+    monkeypatch.setattr(scan_mod, "PARALLEL_FROM", 10**9)
+    one_by_one = scan_mod.scan(str(tmp_path))
+    monkeypatch.setattr(scan_mod, "PARALLEL_FROM", 1)
+    threaded = scan_mod.scan(str(tmp_path))
+    assert len(threaded.tracks) == 120
+    assert threaded.tracks == one_by_one.tracks and list(threaded.dirs) == list(one_by_one.dirs)
+
+
+def test_big_folders_really_use_several_threads_and_small_ones_do_not(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    _many(tmp_path)
+    real, idents = scan_mod._open, set()
+
+    def spy(path, fmt):
+        idents.add(threading.get_ident())
+        time.sleep(0.003)  # long enough for the other readers to start
+        return real(path, fmt)
+
+    monkeypatch.setattr(scan_mod, "_open", spy)
+    scan_mod.scan(str(tmp_path))
+    assert len(idents) > 1 and threading.get_ident() not in idents  # 120 files >= PARALLEL_FROM
+    idents.clear()
+    small = tmp_path / "small"
+    _many(small, 10)
+    scan_mod.scan(str(small))
+    assert idents == {threading.get_ident()}  # 10 files: read right here, no threads
+
+
+def test_threaded_scan_uses_and_fills_the_cache(tmp_path, monkeypatch, opened):
+    _many(tmp_path)
+    monkeypatch.setattr(scan_mod, "PARALLEL_FROM", 1)
+    cache = scan_mod.TagCache()
+    first = scan_mod.scan(str(tmp_path), cache=cache)
+    assert len(opened) == 120 and cache.hits == 0
+    opened.clear()
+    second = scan_mod.scan(str(tmp_path), cache=cache)
+    assert opened == [] and cache.hits == 120 and second.tracks == first.tracks
+
+
+def test_cancelling_a_threaded_scan_stops_early_and_keeps_the_cache(tmp_path, monkeypatch):
+    import threading
+
+    _many(tmp_path, 300)
+    monkeypatch.setattr(scan_mod, "PARALLEL_FROM", 1)
+    cache = scan_mod.TagCache()
+    scan_mod.scan(str(tmp_path / "d0"), cache=cache)  # something already known
+    known = dict(cache._entries)
+    stop = threading.Event()
+    res = scan_mod.scan(str(tmp_path), progress=lambda d, n: stop.set() if d >= 30 else None, cancel=stop, cache=cache)
+    assert res.cancelled and 30 <= len(res.tracks) < 300
+    assert cache._entries == known  # a cancelled scan changes nothing in the cache
+    assert not [t for t in threading.enumerate() if t.name.startswith("ThreadPoolExecutor")]  # no reader left behind

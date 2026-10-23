@@ -421,7 +421,7 @@ class App:
         pat.grid(row=row, column=1, sticky="we", pady=(0, 8))
         top = ttk.Frame(pat)
         top.pack(anchor="w", fill="x")
-        self.pattern_box = ttk.Combobox(top, textvariable=self.var_pattern, values=list(prefs_mod.PRESETS), width=58)
+        self.pattern_box = ttk.Combobox(top, textvariable=self.var_pattern, values=list(prefs_mod.PRESETS), width=68)
         self.pattern_box.pack(side="left")
         # placeholder buttons: a click puts the placeholder where the cursor is
         chips = ttk.Frame(pat)
@@ -500,6 +500,8 @@ class App:
         head.pack(fill="x", pady=(0, 10))
         # shown only while some files lack tags (see _fill_organize)
         self.btn_tag_filler = ttk.Button(head, text=t("btn_open_tag_filler"), command=self._open_tag_filler)
+        # shown while the plan has multi-disc albums and the pattern has no "{disc}"
+        self.btn_disc_rule = ttk.Button(head, text="", command=self._use_disc_rule)
         self.lbl_summary = ttk.Label(head, text="", style="SummaryMuted.TLabel")
         self.lbl_summary.pack(side="left", fill="x", expand=True)
         self.lbl_summary.bind("<Configure>", lambda e: self.lbl_summary.configure(wraplength=max(200, e.width - 28)))
@@ -878,6 +880,14 @@ class App:
             self.btn_tag_filler.pack(side="right", padx=(10, 0), before=self.lbl_summary)
         elif not has_untagged and packed:
             self.btn_tag_filler.pack_forget()
+        discs = self.plan.disc_albums if self.plan is not None else 0
+        disc_packed = bool(self.btn_disc_rule.winfo_manager())
+        if discs:
+            self.btn_disc_rule.configure(text=t("btn_disc_rule", count=discs))
+            if not disc_packed:
+                self.btn_disc_rule.pack(side="right", padx=(10, 0), before=self.lbl_summary)  # same rule as above
+        elif disc_packed:
+            self.btn_disc_rule.pack_forget()
         if self.plan is None:
             if self.scan is None:
                 self.lbl_summary.configure(text=t("drop_sub"), style="SummaryMuted.TLabel")
@@ -966,6 +976,10 @@ class App:
         sec = dedupe.estimate_seconds(len(self.scan.tracks))
         self.lbl_fp.configure(text=t("msg_fp_estimate_short", min=sec // 60, sec=sec % 60), style="Muted.TLabel")
 
+    def _use_disc_rule(self) -> None:
+        """The preset with "{disc}": one folder per album, files named "2-05 - Title" (the var's trace re-plans)."""
+        self.var_pattern.set(prefs_mod.DISC_PATTERN)
+
     # ------------------------------------------------------------------ pattern helper
     def _insert_placeholder(self, ph: str) -> None:
         box = self.pattern_box
@@ -993,7 +1007,8 @@ class App:
         stale = not self.plan_ready() or self.plan.options.pattern != pattern
         if item is not None and stale and item.action not in (plan_mod.DUPE_MOVE, plan_mod.DUPE_TRASH):
             # the new plan is still being built: show this file through the pattern as typed now
-            segs = pattern_mod.render(pattern, item.track, self.plan.options.fallbacks,
+            track = item.track.disc_view() if "disc" in pattern_mod.placeholders_in(pattern) else item.track
+            segs = pattern_mod.render(pattern, track, self.plan.options.fallbacks,
                                       self.index.rep if self.index else (lambda s: s), item.multi_disc)
             if item.keep_name:
                 segs[-1] = os.path.splitext(item.track.name)[0]

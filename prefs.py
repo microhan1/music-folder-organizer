@@ -10,9 +10,12 @@ import os
 
 import i18n
 from pattern import DEFAULT_PATTERN
+DISC_PATTERN = "{album_artist|artist}/{album}/{disc}-{track:02} - {title}"  # "2-05 - Title" on multi-disc albums only
+YEAR_PATTERN = "{album_artist|artist}/[{year}] {album}/{disc}-{track:02} - {title}"  # "[1984] Album"; "{disc}" only on multi-disc albums
 PRESETS = (
     DEFAULT_PATTERN,
-    "{album_artist|artist}/{album}/{disc}-{track:02} - {title}",  # "2-05 - Title" on multi-disc albums only
+    DISC_PATTERN,
+    YEAR_PATTERN,
     "{artist}/{title}",
     "{year}/{artist} - {title}",
 )

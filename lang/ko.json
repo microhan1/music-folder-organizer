@@ -7,6 +7,7 @@
   "dupe_cross": "앨범 {count}개",
   "cli_dedupe_across": "다른 앨범에 실린 같은 곡도 하나만 남김(--dedupe 포함)",
   "btn_open_tag_filler": "음악 정보 채우기로 열기",
+  "btn_disc_rule": "여러 장 앨범 {count}개 · 디스크 번호 규칙으로",
   "dlg_pick_tag_filler": "음악 정보 채우기(music-tag-filler.exe)를 골라 주세요",
   "msg_tag_filler_started": "음악 정보 채우기에서 {count}개 파일을 열었습니다. 그 창을 닫으면 여기서 태그를 다시 읽습니다.",
   "msg_tag_filler_skipped": "(wav·wma 등 {count}개는 음악 정보 채우기가 다루지 않아 뺐습니다)",

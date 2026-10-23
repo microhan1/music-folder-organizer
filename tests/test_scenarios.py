@@ -38,12 +38,12 @@ SAMPLE_FILES = ["song-128.mp3", "song-320.mp3", "song.flac", "tone.ogg", "other.
 ARTISTS = ["Artist A", "artist a", "ARTIST A ", "岡田 有希子", "岡田有希子", "Minako Yoshida (吉田美奈子)", "吉田美奈子",
            "Various Artists", "A/B", "AC:DC", "", "x" * 60, "The Band", "Band, The", "아이유", "IU", "Con", "Trail."]
 ALBUMS = ["Album One", "Album One (Deluxe)", "Best of A", "", "CD1/2", "What?", "NUL", "ünï 앨범", "album one", "Live '99",
-          "y" * 70, "Unknown Album", "[Single]"]
+          "y" * 70, "Unknown Album", "[Single]", "Box [Disc 1]", "Box (Disc 2)", "Box CD3", "Album One - Disc 2"]
 TITLES = ["Song", "Another Song", "Track", "노래", "歌", "Sing: A (Remix)", "What?", "", "Intro", "Song (2)", "t" * 80]
 FOLDERS = ["a", "B", "new folder", "dump", "음악", "CD1", "Disc 2", "_Duplicates", "_중복", "Unknown Artist", "알 수 없는 가수",
            "with.dot", "2020", "x y z"]
 NAME_STYLES = ["{n:02d} {t}", "track{n:02d}", "{a} - {t}", "{t}", "{n}.{t}", "{n:02d}. {t} ", "01 - {t}", "{t} copy"]
-PATTERNS = [prefs_mod.PRESETS[0], prefs_mod.PRESETS[1], "{artist}/{title}", "{year}/{artist} - {title}",
+PATTERNS = [prefs_mod.PRESETS[0], prefs_mod.PRESETS[1], prefs_mod.YEAR_PATTERN, "{artist}/{title}", "{year}/{artist} - {title}",
             "{genre}/{album}/{title}", "{artist}/{album}/{disc}-{track:02} {title}", "{album_artist|artist}/{title}",
             "{artist_sort}/{album}/{track:02} {title}"]
 FALLBACKS = [{}, {}, {"artist": "Nobody", "album": "Nothing"}, {"artist": "", "year": "????"}]
