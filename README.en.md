@@ -121,6 +121,10 @@ At start the tool sends only its name and version to the 책갈피 server (chaek
 
 ![One-line notice at the bottom of the window](docs/update_notice.png)
 
+## Feedback
+
+Tell us what's broken or missing with **Send feedback** at the top of the window (opens your browser) or at https://chaekgalpi.co.kr/en/tools/musicfolder#feedback, no sign-in needed. [GitHub Issues](https://github.com/microhan1/music-folder-organizer/issues) are welcome too.
+
 ## What it does not do
 
 - It never edits tags; it only reads them (editing is Music Tag Filler's job).

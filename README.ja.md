@@ -120,6 +120,10 @@ python main.py ./music --undo-run 1a2b3c4d5e6f         # 選んだ実行を元�
 
 ![ウィンドウ下の 1 行の通知](docs/update_notice.png)
 
+## ご意見・お問い合わせ
+
+不具合・ご要望は、ウィンドウ上部の **ご意見を送る**(ブラウザが開きます)または https://chaekgalpi.co.kr/en/tools/musicfolder#feedback からログインなしで送れます。[GitHub Issues](https://github.com/microhan1/music-folder-organizer/issues) も引き続き受け付けます。
+
 ## しないこと
 
 - タグを変更しません。読むだけです(タグの編集は音楽情報フィラーの役目)。

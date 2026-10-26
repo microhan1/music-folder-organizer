@@ -291,6 +291,12 @@ class App:
               foreground=[("disabled", "#ffffff")], bordercolor=[("disabled", ACCENT_OFF), ("active", ACCENT_HOVER)],
               lightcolor=[("disabled", ACCENT_OFF), ("active", ACCENT_HOVER)], darkcolor=[("disabled", ACCENT_OFF), ("active", ACCENT_HOVER)])
 
+        # a borderless link in the header (send feedback)
+        s.configure("Link.TButton", padding=(6, 6), background=SURFACE, foreground=ACCENT, relief="flat",
+                    bordercolor=SURFACE, lightcolor=SURFACE, darkcolor=SURFACE, font=self.f_small)
+        s.map("Link.TButton", background=[("pressed", SURFACE), ("active", SURFACE)],
+              foreground=[("active", ACCENT_HOVER)], bordercolor=[("active", SURFACE)])
+
         # two-way choices as a segmented control
         s.configure("Seg.Toolbutton", padding=(14, 5), background=HEAD_BG, foreground=MUTED, anchor="center",
                     relief="raised", bordercolor=BORDER, lightcolor=HEAD_BG, darkcolor=HEAD_BG)
@@ -373,6 +379,8 @@ class App:
         lang.bind("<<ComboboxSelected>>", self._on_lang)
         ttk.Label(inner, text=t("lbl_language"), style="Muted.TLabel").pack(side="right", padx=8)
         ttk.Button(inner, text=t("btn_settings"), command=self._show_settings).pack(side="right", padx=(0, 16))
+        self.btn_feedback = ttk.Button(inner, text=t("btn_feedback"), style="Link.TButton", command=self._open_feedback)
+        self.btn_feedback.pack(side="right", padx=(0, 8))
         if self._icon is not None:
             ttk.Label(inner, image=self._icon).pack(side="left", padx=(0, 12))
         names = ttk.Frame(inner)
@@ -1373,6 +1381,18 @@ class App:
                 pass
         self._update_info = None
         self._show_update_notice()
+
+    def _open_feedback(self) -> None:
+        """The feedback box on the tools page, in the browser. Nothing is sent from here; when
+        no browser opens, the address is shown so it can be copied (Ctrl+C copies a message box)."""
+        url = update_check.feedback_url(UPDATE_SLUG, APP_VERSION, i18n.current_lang())
+        try:
+            opened = webbrowser.open(url)
+        except Exception:  # webbrowser.Error, OSError
+            opened = False
+        if not opened:
+            self.lbl_status.configure(text=t("msg_feedback_failed_status", url=url))
+            messagebox.showwarning(t("btn_feedback"), t("msg_feedback_failed", url=url))
 
     def _update_later(self) -> None:
         if self._update_info is not None:

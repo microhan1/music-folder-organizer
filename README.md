@@ -120,6 +120,10 @@ python main.py ./music --undo-run 1a2b3c4d5e6f         # 고른 실행 하나 �
 
 ![창 아래 한 줄 알림: 새 버전이 나왔습니다: 0.4.4 (현재 0.4.3)](docs/update_notice.png)
 
+## 의견·문의
+
+안 되는 것·불편한 것·바라는 기능은 프로그램 위쪽의 **의견 보내기**(브라우저가 열림) 또는 https://chaekgalpi.co.kr/tools/musicfolder#feedback 에서 로그인 없이 보낼 수 있습니다. [GitHub Issues](https://github.com/microhan1/music-folder-organizer/issues)도 그대로 받습니다.
+
 ## 하지 않는 것
 
 - 태그를 수정하지 않습니다. 읽기만 합니다(태그 수정은 음악 정보 채우기의 일).

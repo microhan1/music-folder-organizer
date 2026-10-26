@@ -979,3 +979,164 @@ def test_disc_hint_button_is_absent_without_multi_disc_albums(app, lib):
     app.load_source(str(lib))
     app.wait()
     assert app.btn_disc_rule.winfo_manager() == ""
+
+
+# ------------------------------------------------------------------ send feedback (v0.5.1)
+# The browser and the network are faked: webbrowser.open records the address, and every
+# socket connect or name lookup is refused and counted (the update check is already
+# stubbed by conftest.no_network). The address itself is tested in test_feedback.py.
+@pytest.fixture
+def browser(monkeypatch):
+    import webbrowser
+
+    state = {"opened": [], "result": True}
+
+    def fake_open(url, *args, **kwargs):
+        state["opened"].append(url)
+        res = state["result"]
+        if isinstance(res, BaseException):
+            raise res
+        return res
+
+    monkeypatch.setattr(webbrowser, "open", fake_open)
+    return state
+
+
+@pytest.fixture
+def no_sockets(monkeypatch, no_network):
+    """Any attempt to open a connection or look up a name, by anything, fails the test."""
+    import socket
+
+    tries = []
+
+    def refuse(name):
+        def guard(*args, **kwargs):
+            tries.append((name, args[:2]))
+            raise OSError("blocked in tests (test_gui.no_sockets)")
+        return guard
+
+    monkeypatch.setattr(socket, "create_connection", refuse("create_connection"))
+    monkeypatch.setattr(socket, "getaddrinfo", refuse("getaddrinfo"))
+    monkeypatch.setattr(socket.socket, "connect", refuse("connect"))
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse("connect_ex"))
+    yield tries
+    assert tries == [] and list(no_network) == []
+
+
+@pytest.fixture
+def fb(app, browser, no_sockets):
+    return app
+
+
+def _feedback_url(lang):
+    import update_check
+    from version import APP_VERSION
+
+    return update_check.feedback_url("musicfolder", APP_VERSION, lang)
+
+
+def _set_lang(app, lang):
+    app.var_lang.set(i18n.LANG_NAMES[lang])
+    app._on_lang()
+    app.root.update()
+
+
+def _state(app):
+    return {"source": app.source, "plan": app.plan, "busy": app.busy, "lang": i18n.current_lang(),
+            "settings": {k: v for k, v in i18n.load_settings().items() if k != "artists_path"},
+            "update": app._update_info, "notice": bool(app.frm_update.winfo_manager())}
+
+
+def test_feedback_button_is_in_the_header_and_fits(fb):
+    import gui
+
+    btn = fb.btn_feedback
+    assert btn.cget("text") == "Send feedback" and btn.cget("style") == "Link.TButton"
+    width, height, min_w, min_h = gui.window_size(fb.root)
+    for w, h in ((width, height), (min_w, min_h)):
+        fb.root.geometry(f"{w}x{h}")
+        fb.pump(0.3)
+        x = btn.winfo_rootx() - fb.root.winfo_rootx()
+        assert btn.winfo_ismapped() and btn.winfo_width() > 20
+        assert 0 <= x and x + btn.winfo_width() <= fb.root.winfo_width()
+
+
+def test_feedback_click_opens_the_page_once(fb, browser, dialogs):
+    fb.btn_feedback.invoke()
+    assert browser["opened"] == [_feedback_url("en")]
+    assert dialogs["shown"] == []
+
+
+@pytest.mark.parametrize("lang", ["ko", "ja", "zh-CN"])
+def test_feedback_follows_the_language_chosen_while_running(fb, browser, lang):
+    """The button is rebuilt with the new text and the next click opens that language's page."""
+    import urllib.parse
+
+    fb.btn_feedback.invoke()
+    _set_lang(fb, lang)
+    assert fb.btn_feedback.cget("text") == i18n.t("btn_feedback")
+    fb.btn_feedback.invoke()
+    assert browser["opened"] == [_feedback_url("en"), _feedback_url(lang)]
+    path = urllib.parse.urlsplit(browser["opened"][1]).path
+    assert path == ("/tools/musicfolder" if lang == "ko" else "/en/tools/musicfolder")
+    _set_lang(fb, "en")
+    assert fb.btn_feedback.cget("text") == "Send feedback"
+
+
+@pytest.mark.parametrize("failure", ["false", "none", "webbrowser.Error", "OSError", "other"])
+def test_feedback_without_a_browser_shows_the_address(fb, browser, dialogs, failure):
+    """No exception; one warning with the address to copy and the address on the status
+    line; nothing else changes, and the next click tries again."""
+    import webbrowser
+
+    before = _state(fb)
+    browser["result"] = {"false": False, "none": None, "webbrowser.Error": webbrowser.Error("no runnable browser"),
+                         "OSError": OSError(2, "not found"), "other": RuntimeError("odd")}[failure]
+    fb.btn_feedback.invoke()
+    url = _feedback_url("en")
+    assert browser["opened"] == [url]
+    assert dialogs["shown"] == [("showwarning", i18n.t("msg_feedback_failed", url=url))]
+    assert url in fb.lbl_status.cget("text")
+    assert _state(fb) == before and fb.frame.winfo_exists()
+    browser["result"] = True
+    fb.btn_feedback.invoke()
+    assert len(browser["opened"]) == 2 and len(dialogs["shown"]) == 1
+
+
+def test_feedback_failure_message_in_korean(fb, browser, dialogs):
+    browser["result"] = False
+    _set_lang(fb, "ko")
+    fb.btn_feedback.invoke()
+    url = _feedback_url("ko")
+    assert dialogs["shown"] == [("showwarning", i18n.t("msg_feedback_failed", url=url))]
+    assert "브라우저를 열지 못했습니다" in dialogs["shown"][0][1] and url in dialogs["shown"][0][1]
+
+
+def test_feedback_does_not_touch_the_update_check(fb, browser, monkeypatch):
+    """The button neither asks the server nor changes the update settings, and the update
+    notice still works as before."""
+    import update_check
+
+    calls = []
+    monkeypatch.setattr(update_check, "check_async", lambda *a, **k: calls.append(a) or True)
+    monkeypatch.setattr(update_check, "fetch", lambda *a, **k: calls.append(a))
+    settings = dict(i18n.load_settings())
+    fb.btn_feedback.invoke()
+    assert calls == [] and i18n.load_settings() == settings
+    fb._on_update_result(_info("9.9.9"), True)
+    fb.pump()
+    assert fb.frm_update.winfo_manager() and "9.9.9" in fb.lbl_update.cget("text")
+    fb.btn_feedback.invoke()  # the notice stays
+    assert fb.frm_update.winfo_manager()
+    fb._update_open()
+    assert browser["opened"][-1] == _info().url and not fb.frm_update.winfo_manager()
+
+
+def test_feedback_many_clicks_send_nothing(fb, browser, no_sockets):
+    for _ in range(20):
+        fb.btn_feedback.invoke()
+    browser["result"] = False
+    for _ in range(3):
+        fb.btn_feedback.invoke()
+    fb.pump(0.3)
+    assert len(browser["opened"]) == 23 and len(set(browser["opened"])) == 1 and no_sockets == []

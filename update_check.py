@@ -40,6 +40,22 @@ def page_for(info: UpdateInfo, lang: str) -> str:
     return info.url
 
 
+FEEDBACK_LANGS_EN = ("en", "ja", "zh-cn")  # the site has no Japanese or Chinese page
+
+
+def feedback_url(slug: str, version: str | None, lang: str | None) -> str:
+    """The tools page's feedback box, which [Send feedback] opens in the browser. Built from
+    constants only; nothing is sent from the app. The Korean page for ko and anything
+    unknown, the English one for en/ja/zh-CN. utm_source=app marks it as the Windows
+    program on the site's admin screen; #feedback scrolls down to the box."""
+    prefix = "en/" if (lang or "").strip().lower() in FEEDBACK_LANGS_EN else ""
+    query = "utm_source=app&utm_medium=feedback"
+    version = (version or "").strip()
+    if version:
+        query += "&v=" + urllib.parse.quote(version, safe="")
+    return f"{SITE}{prefix}tools/{urllib.parse.quote(slug, safe='')}?{query}#feedback"
+
+
 def today() -> str:
     return datetime.date.today().isoformat()
 

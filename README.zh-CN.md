@@ -120,6 +120,10 @@ python main.py ./music --undo-run 1a2b3c4d5e6f         # 撤销选定的一次�
 
 ![窗口底部的一行提示](docs/update_notice.png)
 
+## 反馈
+
+问题或建议可通过窗口上方的 **发送反馈**(将打开浏览器)或 https://chaekgalpi.co.kr/en/tools/musicfolder#feedback 免登录发送。也欢迎使用 [GitHub Issues](https://github.com/microhan1/music-folder-organizer/issues)。
+
 ## 不做的事
 
 - 不修改标签，只读取(修改标签是音乐信息填充的工作)。
