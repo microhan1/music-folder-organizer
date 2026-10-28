@@ -486,14 +486,17 @@ class App:
         tk.Frame(outer, bg=BORDER, height=1).pack(fill="x")
         inner = ttk.Frame(head, padding=(20, 14))
         inner.pack(fill="x")
-        # fixed-size controls on the right first, so a narrow window cuts the tagline, not them (LESSONS A18)
+        # made in the order they are seen (feedback, settings, language) so Tab follows the screen;
+        # Space (ttk's own binding) and Enter press the link
+        self.btn_feedback = ttk.Button(inner, text=t("btn_feedback"), style="Link.TButton", command=self._open_feedback)
+        settings = ttk.Button(inner, text=t("btn_settings"), command=self._show_settings)
+        lbl_lang = ttk.Label(inner, text=t("lbl_language"), style="Muted.TLabel")
         lang = ttk.Combobox(inner, textvariable=self.var_lang, values=list(i18n.LANG_NAMES.values()), state="readonly", width=10)
+        # fixed-size controls on the right first, so a narrow window cuts the tagline, not them (LESSONS A18)
         lang.pack(side="right")
         lang.bind("<<ComboboxSelected>>", self._on_lang)
-        ttk.Label(inner, text=t("lbl_language"), style="Muted.TLabel").pack(side="right", padx=8)
-        ttk.Button(inner, text=t("btn_settings"), command=self._show_settings).pack(side="right", padx=(0, 16))
-        # Tab reaches it after [Settings]; Space (ttk's own binding) and Enter press it
-        self.btn_feedback = ttk.Button(inner, text=t("btn_feedback"), style="Link.TButton", command=self._open_feedback)
+        lbl_lang.pack(side="right", padx=8)
+        settings.pack(side="right", padx=(0, 16))
         self.btn_feedback.pack(side="right", padx=(0, 8))
         for key in ("<Return>", "<KP_Enter>"):
             self.btn_feedback.bind(key, self._press_feedback)

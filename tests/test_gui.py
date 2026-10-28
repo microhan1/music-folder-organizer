@@ -1164,7 +1164,12 @@ def quick_tip(fb, monkeypatch):
 
 def _settings_button(app):
     kids = app.btn_feedback.master.winfo_children()
-    return kids[kids.index(app.btn_feedback) - 1]
+    return kids[kids.index(app.btn_feedback) + 1]
+
+
+def _language_box(app):
+    kids = app.btn_feedback.master.winfo_children()
+    return kids[kids.index(app.btn_feedback) + 3]
 
 
 def _key(widget, seq):
@@ -1235,24 +1240,29 @@ def test_the_key_helper_runs_tk_bindings(root):
     b.destroy()
 
 
-def test_feedback_is_in_the_tab_order_after_settings(fb):
+def test_header_tab_order_follows_the_screen(fb):
+    """Left to right as seen: [Send feedback] -> [Settings] -> language box; Shift+Tab the other way."""
+    from tkinter import ttk
+
     fb.pump(0.1)
-    btn, settings = fb.btn_feedback, _settings_button(fb)
-    assert settings.cget("text") == i18n.t("btn_settings")
-    assert str(settings.tk_focusNext()) == str(btn)       # Tab from [Settings] reaches the link
-    assert str(btn.tk_focusPrev()) == str(settings)       # Shift+Tab goes back
-    assert str(btn.tk_focusNext()) != str(btn)            # and Tab leaves it again
+    btn, settings, lang = fb.btn_feedback, _settings_button(fb), _language_box(fb)
+    assert settings.cget("text") == i18n.t("btn_settings") and isinstance(lang, ttk.Combobox)
+    assert str(btn.tk_focusNext()) == str(settings)       # Tab from the link reaches [Settings]
+    assert str(settings.tk_focusNext()) == str(lang)      # then the language box
+    assert str(lang.tk_focusPrev()) == str(settings)      # Shift+Tab goes back
+    assert str(settings.tk_focusPrev()) == str(btn)
+    assert str(btn.tk_focusPrev()) not in (str(btn), str(settings), str(lang))  # and leaves the header
 
 
 def test_tab_and_shift_tab_keys_move_the_focus(fb):
     fb.pump(0.1)
     btn, settings = fb.btn_feedback, _settings_button(fb)
-    settings.focus_set()
+    btn.focus_set()
     fb.root.update()
-    _key(settings, "<Key-Tab>")
-    assert str(fb.root.focus_lastfor()) == str(btn)
-    _key(btn, "<Shift-Key-Tab>")
+    _key(btn, "<Key-Tab>")
     assert str(fb.root.focus_lastfor()) == str(settings)
+    _key(settings, "<Shift-Key-Tab>")
+    assert str(fb.root.focus_lastfor()) == str(btn)
 
 
 @pytest.mark.parametrize("key", ["<Key-Return>", "<Key-space>"])
