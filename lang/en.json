@@ -42,6 +42,7 @@
   "btn_feedback": "Send feedback",
   "msg_feedback_failed": "Could not open a browser. Paste this address into your browser (press Ctrl+C in this box to copy its text).\n\n{url}",
   "msg_feedback_failed_status": "Could not open a browser: {url}",
+  "tip_feedback": "Tell us what's broken or missing (opens your browser)",
   "dlg_settings_title": "Settings",
   "set_section_fallbacks": "Names used when a tag is empty (blank = default)",
   "set_section_files": "Folders and files (blank = default or automatic)",

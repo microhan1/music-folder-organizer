@@ -16,6 +16,8 @@ import urllib.parse
 import urllib.request
 from typing import Callable
 
+from i18n import DEFAULT_LANG
+
 API = "https://chaekgalpi.co.kr/api/tools/{slug}/latest"
 SITE = "https://chaekgalpi.co.kr/"  # the notice only ever opens a page on this site
 TIMEOUT = 4.0
@@ -32,23 +34,29 @@ class UpdateInfo:
     url_en: str = ""  # the English tools page, when the server has one (and it is on the tools site)
 
 
-def page_for(info: UpdateInfo, lang: str) -> str:
+def is_korean(lang: str | None) -> bool:
+    """Which tools page a screen language gets (the same rule across the series): the Korean
+    page only for a code whose first part is ko (ko, ko-KR, ko_KR), the English page (/en)
+    for every other code, known or not - the site has no Japanese or Chinese page. None or
+    a blank value follows this tool's default screen language (i18n.DEFAULT_LANG)."""
+    code = (lang or "").strip() or DEFAULT_LANG
+    return code.lower().replace("_", "-").split("-")[0] == "ko"
+
+
+def page_for(info: UpdateInfo, lang: str | None) -> str:
     """The page [Update] opens: the Korean one on a Korean screen, otherwise the English
     one when the server gave a valid one, else the Korean one."""
-    if lang != "ko" and info.url_en.startswith(SITE):
+    if not is_korean(lang) and info.url_en.startswith(SITE):
         return info.url_en
     return info.url
 
 
-FEEDBACK_LANGS_EN = ("en", "ja", "zh-cn")  # the site has no Japanese or Chinese page
-
-
 def feedback_url(slug: str, version: str | None, lang: str | None) -> str:
     """The tools page's feedback box, which [Send feedback] opens in the browser. Built from
-    constants only; nothing is sent from the app. The Korean page for ko and anything
-    unknown, the English one for en/ja/zh-CN. utm_source=app marks it as the Windows
+    constants only; nothing is sent from the app. The Korean page for a Korean screen, the
+    English one for any other language (is_korean). utm_source=app marks it as the Windows
     program on the site's admin screen; #feedback scrolls down to the box."""
-    prefix = "en/" if (lang or "").strip().lower() in FEEDBACK_LANGS_EN else ""
+    prefix = "" if is_korean(lang) else "en/"
     query = "utm_source=app&utm_medium=feedback"
     version = (version or "").strip()
     if version:

@@ -101,7 +101,7 @@ def test_waits_one_and_a_half_seconds_first(inline_threads):
 
 
 def test_the_app_sends_its_own_slug_and_version():
-    assert SLUG == "musicfolder" and APP_VERSION == "0.5.1"
+    assert SLUG == "musicfolder" and APP_VERSION == "0.5.2"
     import gui
 
     assert gui.UPDATE_SLUG == SLUG

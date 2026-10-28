@@ -1140,3 +1140,303 @@ def test_feedback_many_clicks_send_nothing(fb, browser, no_sockets):
         fb.btn_feedback.invoke()
     fb.pump(0.3)
     assert len(browser["opened"]) == 23 and len(set(browser["opened"])) == 1 and no_sockets == []
+
+
+# ------------------------------------------------------------------ send feedback: keyboard and tooltip (v0.5.2)
+# Keys run the window's own Tk bindings (_key), never the OS keyboard, so a test run cannot
+# type into whatever the user is doing, and it does not matter which window holds the OS
+# focus (other test runs may; a generated key is dropped then, LESSONS C10). The pointer is
+# generated Tk events. The page language rule and the READMEs are in test_feedback_followup.py.
+TIPS = {"ko": "안 되는 것·불편한 것·바라는 기능을 알려 주세요(브라우저가 열립니다)",
+        "en": "Tell us what's broken or missing (opens your browser)",
+        "ja": "不具合・ご要望をお知らせください（ブラウザが開きます）",
+        "zh-CN": "告诉我们问题或建议（将打开浏览器）"}
+
+
+@pytest.fixture
+def quick_tip(fb, monkeypatch):
+    """The tooltip without its wait, so a test does not sleep."""
+    import gui
+
+    monkeypatch.setattr(gui.Tooltip, "DELAY_MS", 0)
+    return fb
+
+
+def _settings_button(app):
+    kids = app.btn_feedback.master.winfo_children()
+    return kids[kids.index(app.btn_feedback) - 1]
+
+
+def _key(widget, seq):
+    """Run what Tk runs when the key `seq` (canonical, "<Key-Return>") reaches `widget`:
+    for each bind tag in order (widget, class, toplevel, all) the most specific binding -
+    the key itself, a virtual event made of it (<<NextWindow>> is Tab), or any key - with
+    its %-fields filled in, stopping at "break"."""
+    import re
+
+    tcl = widget.tk
+    virtual = [v for v in tcl.splitlist(tcl.call("event", "info")) if seq in tcl.splitlist(tcl.call("event", "info", v))]
+    keysym = seq[1:-1].split("-")[-1]
+    fields = {"%": "%", "W": str(widget), "K": keysym, "A": "{}", "T": "2"}
+    for tag in widget.bindtags():
+        script = next((x for x in (tcl.call("bind", tag, q) for q in (seq, *virtual, "<KeyPress>")) if x), "")
+        if not script:
+            continue
+        script = re.sub(r"%(.)", lambda m: fields.get(m.group(1), "0"), script)
+        code = int(tcl.call("catch", script))
+        if code == 3:  # break
+            break
+        assert code in (0, 4), tcl.call("set", "errorInfo")
+    widget.update()
+
+
+def _press(app, key):
+    app.pump(0.1)  # the rebuilt header is mapped, so it can take the focus
+    app.btn_feedback.focus_set()
+    app.root.update()
+    assert str(app.root.focus_lastfor()) == str(app.btn_feedback)
+    _key(app.btn_feedback, key)
+
+
+def _hover(app):
+    app.btn_feedback.event_generate("<Enter>", x=3, y=3)
+    for _ in range(3):
+        app.root.update()
+    return app.feedback_tip.tip
+
+
+def _leave(app):
+    app.btn_feedback.event_generate("<Leave>")
+    app.root.update()
+
+
+def _tip_label(tip):
+    (label,) = tip.winfo_children()
+    return label
+
+
+def _tips_open(app):
+    return [w for w in app.btn_feedback.winfo_children() if isinstance(w, tk.Toplevel)]
+
+
+# a. keyboard
+def test_the_key_helper_runs_tk_bindings(root):
+    from tkinter import ttk
+
+    hits = []
+    b = ttk.Button(root, text="x", command=lambda: hits.append("invoke"))
+    _key(b, "<Key-Return>")
+    assert hits == []                                 # ttk alone has no Enter
+    _key(b, "<Key-space>")
+    assert hits == ["invoke"]                         # the class binding ran
+    b.bind("<Key-space>", lambda e: (hits.append("own"), "break")[1])
+    _key(b, "<Key-space>")
+    assert hits == ["invoke", "own"]                  # "break" stopped the class binding
+    b.destroy()
+
+
+def test_feedback_is_in_the_tab_order_after_settings(fb):
+    fb.pump(0.1)
+    btn, settings = fb.btn_feedback, _settings_button(fb)
+    assert settings.cget("text") == i18n.t("btn_settings")
+    assert str(settings.tk_focusNext()) == str(btn)       # Tab from [Settings] reaches the link
+    assert str(btn.tk_focusPrev()) == str(settings)       # Shift+Tab goes back
+    assert str(btn.tk_focusNext()) != str(btn)            # and Tab leaves it again
+
+
+def test_tab_and_shift_tab_keys_move_the_focus(fb):
+    fb.pump(0.1)
+    btn, settings = fb.btn_feedback, _settings_button(fb)
+    settings.focus_set()
+    fb.root.update()
+    _key(settings, "<Key-Tab>")
+    assert str(fb.root.focus_lastfor()) == str(btn)
+    _key(btn, "<Shift-Key-Tab>")
+    assert str(fb.root.focus_lastfor()) == str(settings)
+
+
+@pytest.mark.parametrize("key", ["<Key-Return>", "<Key-space>"])
+@pytest.mark.parametrize("lang", list(TIPS))
+def test_enter_and_space_open_the_page_exactly_once(fb, browser, dialogs, lang, key):
+    if lang != "en":
+        _set_lang(fb, lang)
+    _press(fb, key)
+    assert browser["opened"] == [_feedback_url(lang)] and dialogs["shown"] == []
+
+
+def test_keypad_enter_is_bound_too(fb):
+    """Windows delivers the keypad Enter as Return (a generated KP_Enter has no key code
+    there); the binding is for other systems."""
+    assert fb.btn_feedback.bind("<KP_Enter>") and fb.btn_feedback.bind("<Return>")
+
+
+def test_other_keys_do_nothing(fb, browser, dialogs):
+    before = _state(fb)
+    for key in ("<Key-Escape>", "<Key-a>", "<Key-Up>", "<Key-Down>", "<Key-BackSpace>", "<Key-F1>", "<Key-Tab>"):
+        _press(fb, key)
+    assert browser["opened"] == [] and dialogs["shown"] == [] and _state(fb) == before
+
+
+def test_focus_is_visible_and_keeps_the_size(fb):
+    from tkinter import ttk
+
+    btn = fb.btn_feedback
+    s = ttk.Style(fb.root)
+    for option in ("background", "bordercolor"):
+        assert s.lookup("Link.TButton", option, ["focus"]) != s.lookup("Link.TButton", option)
+    fb.pump(0.2)
+    size = (btn.winfo_width(), btn.winfo_height())
+    btn.event_generate("<FocusIn>")
+    fb.pump(0.2)
+    assert btn.instate(["focus"]) and (btn.winfo_width(), btn.winfo_height()) == size
+    btn.event_generate("<FocusOut>")
+    fb.pump(0.2)
+    assert not btn.instate(["focus"]) and (btn.winfo_width(), btn.winfo_height()) == size
+
+
+def test_enter_without_a_browser_shows_the_address_once(fb, browser, dialogs):
+    browser["result"] = False
+    _set_lang(fb, "ja")
+    _press(fb, "<Key-Return>")
+    url = _feedback_url("ja")
+    assert browser["opened"] == [url]
+    assert dialogs["shown"] == [("showwarning", i18n.t("msg_feedback_failed", url=url))]
+
+
+# b. tooltip
+def test_tooltip_strings():
+    for lang, text in TIPS.items():
+        assert i18n.load_lang_file(lang)["tip_feedback"] == text
+    assert len(set(TIPS.values())) == 4 and all(v.strip() for v in TIPS.values())
+
+
+@pytest.mark.parametrize("lang", list(TIPS))
+def test_hover_shows_the_tooltip_and_leaving_hides_it(quick_tip, browser, lang):
+    if lang != "en":
+        _set_lang(quick_tip, lang)
+    assert quick_tip.feedback_tip.tip is None
+    tip = _hover(quick_tip)
+    assert tip is not None and tip.winfo_ismapped()
+    assert _tip_label(tip).cget("text") == TIPS[lang]
+    family = quick_tip.root.tk.splitlist(_tip_label(tip).cget("font"))[0]
+    assert family == quick_tip.f_small[0]             # the UI font of that language (Yu Gothic UI for ja)
+    _leave(quick_tip)
+    assert quick_tip.feedback_tip.tip is None and not tip.winfo_exists()
+    assert browser["opened"] == []                    # resting on it opens nothing
+
+
+def test_tooltip_waits_before_it_appears(fb):
+    import gui
+
+    _hover(fb)
+    assert fb.feedback_tip.tip is None                # passing over it shows nothing yet
+    _leave(fb)
+    fb.pump(gui.Tooltip.DELAY_MS / 1000 + 0.3)
+    assert fb.feedback_tip.tip is None                # left before the wait: never shown
+    _hover(fb)
+    fb.pump(gui.Tooltip.DELAY_MS / 1000 + 0.3)
+    assert fb.feedback_tip.tip is not None            # stayed: shown
+    assert 400 <= gui.Tooltip.DELAY_MS <= 500
+
+
+def test_click_hides_the_tooltip_and_opens_once(quick_tip, browser):
+    btn = quick_tip.btn_feedback
+    _hover(quick_tip)
+    btn.event_generate("<ButtonPress-1>", x=3, y=3)
+    quick_tip.root.update()
+    assert quick_tip.feedback_tip.tip is None and _tips_open(quick_tip) == []
+    btn.event_generate("<ButtonRelease-1>", x=3, y=3)
+    quick_tip.root.update()
+    assert browser["opened"] == [_feedback_url("en")]  # ttk presses on the release, once
+
+
+def test_hovering_twice_keeps_one_tooltip(quick_tip):
+    first = _hover(quick_tip)
+    assert _hover(quick_tip) is first and len(_tips_open(quick_tip)) == 1
+
+
+@pytest.mark.parametrize("lang", ["ko", "ja", "zh-CN"])
+def test_language_change_while_shown_changes_the_text(quick_tip, monkeypatch, lang):
+    """Changing the language from the keyboard while the pointer rests on the link: the
+    window is rebuilt and the tooltip comes back in the new language."""
+    import gui
+
+    monkeypatch.setattr(gui.Tooltip, "pointer_inside", lambda self: True)
+    old = _hover(quick_tip)
+    assert _tip_label(old).cget("text") == TIPS["en"]
+    _set_lang(quick_tip, lang)
+    quick_tip.root.update()
+    assert not old.winfo_exists()
+    tip = quick_tip.feedback_tip.tip
+    assert tip is not None and _tip_label(tip).cget("text") == TIPS[lang] and len(_tips_open(quick_tip)) == 1
+
+
+def test_language_change_with_the_pointer_elsewhere_leaves_no_tooltip(quick_tip, monkeypatch):
+    import gui
+
+    monkeypatch.setattr(gui.Tooltip, "pointer_inside", lambda self: False)
+    _hover(quick_tip)
+    _set_lang(quick_tip, "ko")
+    quick_tip.root.update()
+    assert quick_tip.feedback_tip.tip is None and _tips_open(quick_tip) == []
+    assert _tip_label(_hover(quick_tip)).cget("text") == TIPS["ko"]
+
+
+def test_language_change_while_the_tooltip_is_waiting(fb):
+    import gui
+
+    _hover(fb)                                        # scheduled, not shown
+    pending = fb.feedback_tip
+    _set_lang(fb, "ja")
+    fb.pump(gui.Tooltip.DELAY_MS / 1000 + 0.3)
+    assert pending.tip is None and pending._job is None and fb.feedback_tip.tip is None
+
+
+@pytest.mark.parametrize("edge", ["left", "right"])
+@pytest.mark.parametrize("lang", list(TIPS))
+def test_tooltip_stays_in_the_smallest_window_and_on_screen(quick_tip, lang, edge):
+    import gui
+
+    app = quick_tip
+    if lang != "en":
+        _set_lang(app, lang)
+    _, _, min_w, min_h = gui.window_size(app.root)
+    sw, sh = app.root.winfo_screenwidth(), app.root.winfo_screenheight()
+    app.root.geometry(f"{min_w}x{min_h}+{0 if edge == 'left' else sw - min_w}+0")
+    app.pump(0.4)
+    tip = _hover(app)
+    app.root.update()
+    x, y, w, h = tip.winfo_rootx(), tip.winfo_rooty(), tip.winfo_width(), tip.winfo_height()
+    r = app.root
+    assert 0 <= x and x + w <= sw and 0 <= y and y + h <= sh, (x, y, w, h, sw, sh)
+    assert r.winfo_rootx() <= x and x + w <= r.winfo_rootx() + r.winfo_width(), (x, w, r.winfo_rootx(), r.winfo_width())
+    assert r.winfo_rooty() <= y and y + h <= r.winfo_rooty() + r.winfo_height()
+    label = _tip_label(tip)
+    assert label.winfo_width() >= label.winfo_reqwidth() and label.winfo_height() >= label.winfo_reqheight()
+    _leave(app)
+
+
+def test_tooltip_does_not_move_the_header(quick_tip):
+    """It is a separate little window, so the header keeps its layout while it is shown."""
+    btn = quick_tip.btn_feedback
+    quick_tip.pump(0.2)
+    where = [(w.winfo_x(), w.winfo_width()) for w in btn.master.winfo_children()]
+    _hover(quick_tip)
+    quick_tip.pump(0.2)
+    assert [(w.winfo_x(), w.winfo_width()) for w in btn.master.winfo_children()] == where
+
+
+# c. [Update] in the window follows the same language rule as the feedback page
+@pytest.mark.parametrize("lang", list(TIPS))
+def test_update_button_opens_the_page_for_the_language(fb, browser, lang):
+    import update_check
+
+    info = update_check.UpdateInfo("9.9.9", "0.5.1", "https://chaekgalpi.co.kr/tools/musicfolder?utm_source=app",
+                                   "https://chaekgalpi.co.kr/en/tools/musicfolder?utm_source=app")
+    if lang != "en":
+        _set_lang(fb, lang)
+    fb._on_update_result(info, True)
+    fb.pump()
+    fb._update_open()
+    assert browser["opened"] == [info.url if lang == "ko" else info.url_en]
+    assert ("/en/" in browser["opened"][0]) == ("/en/" in _feedback_url(lang))

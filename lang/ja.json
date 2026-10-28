@@ -42,6 +42,7 @@
   "btn_feedback": "ご意見を送る",
   "msg_feedback_failed": "ブラウザを開けませんでした。下のアドレスをブラウザのアドレス欄に貼り付けてください（この画面で Ctrl+C を押すと文字をコピーできます）。\n\n{url}",
   "msg_feedback_failed_status": "ブラウザを開けませんでした: {url}",
+  "tip_feedback": "不具合・ご要望をお知らせください（ブラウザが開きます）",
   "dlg_settings_title": "設定",
   "set_section_fallbacks": "タグが空のときの名前 (空欄 = 既定)",
   "set_section_files": "フォルダとファイル (空欄 = 既定・自動)",

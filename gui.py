@@ -167,6 +167,114 @@ def open_path(path: str) -> None:
         pass
 
 
+def _monitor_of(widget: tk.Misc) -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) of the work area of the monitor showing the widget; the
+    primary screen when that cannot be asked (not Windows, or the call fails)."""
+    box = (0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight())
+    if sys.platform != "win32":
+        return box
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+        user32 = ctypes.windll.user32
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        user32.MonitorFromPoint.argtypes = (wintypes.POINT, wintypes.DWORD)
+        user32.GetMonitorInfoW.argtypes = (wintypes.HMONITOR, ctypes.POINTER(MONITORINFO))
+        point = wintypes.POINT(widget.winfo_rootx(), widget.winfo_rooty())
+        info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+        if user32.GetMonitorInfoW(user32.MonitorFromPoint(point, 2), ctypes.byref(info)):  # 2: nearest
+            r = info.rcWork
+            return (r.left, r.top, r.right, r.bottom)
+    except Exception:
+        pass
+    return box
+
+
+class Tooltip:
+    """A small note under a widget while the pointer rests on it (standard tkinter only).
+    Shown DELAY_MS after the pointer arrives, gone when it leaves or the widget is pressed,
+    kept inside the window and the monitor. It belongs to the widget, so rebuilding the
+    window for another language removes it with the widget."""
+
+    DELAY_MS = 450
+    WRAP = 320  # design pixels at 96 dpi; longer text wraps
+
+    def __init__(self, widget: tk.Widget, text: str, font) -> None:
+        self.widget, self.text, self.font = widget, text, font
+        self.tip: tk.Toplevel | None = None
+        self._job: str | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+        widget.bind("<ButtonPress>", self.hide, add="+")
+        widget.bind("<Destroy>", self.hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        self._cancel()
+        self._job = self.widget.after(self.DELAY_MS, self.show)
+
+    def _cancel(self) -> None:
+        if self._job is not None:
+            try:
+                self.widget.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+    def pointer_inside(self) -> bool:
+        w = self.widget
+        try:
+            px, py = w.winfo_pointerxy()
+            x, y = w.winfo_rootx(), w.winfo_rooty()
+            return w.winfo_ismapped() and x <= px < x + w.winfo_width() and y <= py < y + w.winfo_height()
+        except tk.TclError:
+            return False
+
+    def show_if_pointer_inside(self) -> None:
+        if self.pointer_inside():
+            self.show()
+
+    def show(self) -> None:
+        self._job = None
+        if self.tip is not None or not self.widget.winfo_exists():
+            return
+        w = self.widget
+        scale = max(1.0, w.winfo_fpixels("1i") / 96.0)
+        tip = tk.Toplevel(w)
+        tip.withdraw()
+        tip.overrideredirect(True)
+        tk.Label(tip, text=self.text, font=self.font, justify="left", wraplength=round(self.WRAP * scale),
+                 bg="#fffbe6", fg=TEXT, bd=0, padx=round(8 * scale), pady=round(4 * scale),
+                 highlightthickness=1, highlightbackground="#d6cfa8").pack()
+        tip.update_idletasks()
+        tw, th = tip.winfo_reqwidth(), tip.winfo_reqheight()
+        top = w.winfo_toplevel()
+        gap = round(4 * scale)
+        x, y = w.winfo_rootx(), w.winfo_rooty() + w.winfo_height() + gap
+        # inside the window first (the link sits near its right edge), then on the monitor
+        x = max(top.winfo_rootx() + gap, min(x, top.winfo_rootx() + top.winfo_width() - tw - gap))
+        left, upper, right, bottom = _monitor_of(w)
+        x = max(left, min(x, right - tw))
+        if y + th > bottom:
+            y = w.winfo_rooty() - th - gap
+        tip.geometry(f"+{x}+{max(upper, y)}")
+        tip.deiconify()
+        self.tip = tip
+
+    def hide(self, _event=None) -> None:
+        self._cancel()
+        if self.tip is not None:
+            try:
+                self.tip.destroy()
+            except tk.TclError:
+                pass
+            self.tip = None
+
+
 class App:
     def __init__(self, root: tk.Tk, initial: str | None = None) -> None:
         self.root = root
@@ -294,8 +402,11 @@ class App:
         # a borderless link in the header (send feedback)
         s.configure("Link.TButton", padding=(6, 6), background=SURFACE, foreground=ACCENT, relief="flat",
                     bordercolor=SURFACE, lightcolor=SURFACE, darkcolor=SURFACE, font=self.f_small)
-        s.map("Link.TButton", background=[("pressed", SURFACE), ("active", SURFACE)],
-              foreground=[("active", ACCENT_HOVER)], bordercolor=[("active", SURFACE)])
+        # with the keyboard focus it gets a soft green box (colours only, so its size stays)
+        s.map("Link.TButton", background=[("focus", ACCENT_SOFT), ("pressed", SURFACE), ("active", SURFACE)],
+              foreground=[("focus", ACCENT_HOVER), ("active", ACCENT_HOVER)],
+              bordercolor=[("focus", ACCENT), ("active", SURFACE)],
+              lightcolor=[("focus", ACCENT_SOFT)], darkcolor=[("focus", ACCENT_SOFT)])
 
         # two-way choices as a segmented control
         s.configure("Seg.Toolbutton", padding=(14, 5), background=HEAD_BG, foreground=MUTED, anchor="center",
@@ -360,6 +471,8 @@ class App:
         return card
 
     def _build(self) -> None:
+        tip = getattr(self, "feedback_tip", None)
+        reopen_tip = tip is not None and tip.tip is not None
         if self.frame is not None:
             self.frame.destroy()
         self.root.title(t("app_title"))
@@ -379,8 +492,14 @@ class App:
         lang.bind("<<ComboboxSelected>>", self._on_lang)
         ttk.Label(inner, text=t("lbl_language"), style="Muted.TLabel").pack(side="right", padx=8)
         ttk.Button(inner, text=t("btn_settings"), command=self._show_settings).pack(side="right", padx=(0, 16))
+        # Tab reaches it after [Settings]; Space (ttk's own binding) and Enter press it
         self.btn_feedback = ttk.Button(inner, text=t("btn_feedback"), style="Link.TButton", command=self._open_feedback)
         self.btn_feedback.pack(side="right", padx=(0, 8))
+        for key in ("<Return>", "<KP_Enter>"):
+            self.btn_feedback.bind(key, self._press_feedback)
+        self.feedback_tip = Tooltip(self.btn_feedback, t("tip_feedback"), self.f_small)
+        if reopen_tip:  # the language changed (from the keyboard) while the pointer rested on it
+            self.root.after_idle(self.feedback_tip.show_if_pointer_inside)
         if self._icon is not None:
             ttk.Label(inner, image=self._icon).pack(side="left", padx=(0, 12))
         names = ttk.Frame(inner)
@@ -1381,6 +1500,11 @@ class App:
                 pass
         self._update_info = None
         self._show_update_notice()
+
+    def _press_feedback(self, _event=None) -> str:
+        """Enter on the focused [Send feedback]: one press, and the key goes no further."""
+        self.btn_feedback.invoke()
+        return "break"
 
     def _open_feedback(self) -> None:
         """The feedback box on the tools page, in the browser. Nothing is sent from here; when

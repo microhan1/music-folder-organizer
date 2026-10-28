@@ -27,8 +27,10 @@ def test_address_for_each_language(lang, expected):
 
 
 @pytest.mark.parametrize("lang", [None, "", "xx", "de", "zh-TW", "fr-FR", "  "])
-def test_unknown_language_gets_the_korean_page(lang):
-    assert uc.feedback_url(SLUG, "0.2.1", lang) == KO
+def test_unknown_language_gets_the_english_page(lang):
+    """Since v0.5.2 only Korean gets the Korean page; a blank value follows the default
+    screen language, English (test_feedback_followup.py has the whole rule)."""
+    assert uc.feedback_url(SLUG, "0.2.1", lang) == EN
 
 
 @pytest.mark.parametrize("lang", ["EN", "En", "JA", "zh-cn", "ZH-CN", " en "])

@@ -42,6 +42,7 @@
   "btn_feedback": "发送反馈",
   "msg_feedback_failed": "无法打开浏览器。请将下面的地址粘贴到浏览器地址栏（在此窗口按 Ctrl+C 可复制文字）。\n\n{url}",
   "msg_feedback_failed_status": "无法打开浏览器：{url}",
+  "tip_feedback": "告诉我们问题或建议（将打开浏览器）",
   "dlg_settings_title": "设置",
   "set_section_fallbacks": "标签为空时使用的名称 (留空 = 默认)",
   "set_section_files": "文件夹和文件 (留空 = 默认或自动)",
