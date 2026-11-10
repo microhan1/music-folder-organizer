@@ -27,6 +27,7 @@ PRD와 결정 사항: [docs/PRD.md](docs/PRD.md). 실제로 있었던 문제와 
 - 한 줄에 "늘어나는 것(라벨·경로)"과 "고정 크기 것(버튼·콤보)"이 같이 있으면 고정 크기를 먼저 pack. 나중에 보였다 숨겼다 하는 위젯은 `pack(before=...)`. 줄에 위젯을 더할 때마다 그 줄 pack 순서를 다시 읽는다(LESSONS A15·A18, 세 번 재발).
 - 다시 그리는 함수(`_fill_*`)가 선택·스크롤을 스스로 보존한다(A20).
 - 인터넷에 나가는 것은 새 버전 확인(`update_check.py`, 하루 한 번, 도구 이름·버전만, 설정에서 끔)뿐이다. 다른 기능을 더하지 않는다. 「의견 보내기」는 브라우저로 툴 페이지를 열 뿐 프로그램은 아무것도 보내지 않으며, 주소는 `update_check.feedback_url`이 상수로만 만든다(설정·서버 응답에서 받지 않음). 테스트는 `conftest.no_network`가 막는다(LESSONS C8). 릴리스마다 `version.py`의 `APP_VERSION`을 올린다.
+- exe 는 압축을 푸는 동안 시작 그림(`assets/splash.png`, `build.bat`의 `--splash`, `assets/make_splash.py`가 그림)을 보인다. `gui.launch`가 창을 다 그린 뒤(`root.update()`) `close_splash()`로 닫고, 창을 만들다 실패해도 `finally`에서 닫는다(오류 안내가 그림에 가리지 않게). 무거운 import 는 없다(mutagen 35~80ms) — 늦은 import 를 더하지 않는다. 시작 시간은 같은 사본을 두 번째 띄운 값으로 잰다(LESSONS D24).
 - 화면에 보이는 문자열은 전부 `lang/*.json`. 키를 추가하면 4개 언어 모두 추가(`test_i18n.py`가 검사).
 
 ## 검증 순서

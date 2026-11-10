@@ -2,6 +2,7 @@
 rem Build music-folder-organizer.exe (single file, no console) with PyInstaller.
 rem Usage: build.bat          -> dist\music-folder-organizer.exe
 rem third_party\fpcalc.exe (Chromaprint) is bundled when present.
+rem assets\splash.png is the start-up picture shown while the exe unpacks (assets\make_splash.py draws it).
 setlocal
 cd /d "%~dp0"
 
@@ -14,6 +15,7 @@ if exist "third_party\fpcalc.exe" set FPCALC=--add-binary "third_party\fpcalc.ex
 python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name music-folder-organizer ^
   --icon "assets\icon.ico" ^
+  --splash "assets\splash.png" ^
   --add-data "assets\icon.png;assets" ^
   --add-data "lang;lang" ^
   --add-data "third_party\LICENSE-chromaprint;third_party" ^

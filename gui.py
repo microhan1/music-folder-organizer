@@ -1833,14 +1833,29 @@ def dataclass_copy(p: prefs_mod.Prefs) -> prefs_mod.Prefs:
     return copy.deepcopy(p)
 
 
+def close_splash() -> None:
+    """Close the start-up picture the exe shows while it unpacks (PyInstaller --splash).
+    Run from Python there is no pyi_splash module, so this does nothing."""
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
 def launch(initial: str | None = None) -> None:
     _enable_dpi_awareness()
-    root = TkinterDnD.Tk() if _HAS_DND else tk.Tk()
-    icon = os.path.join(i18n.resource_dir(), "assets", "icon.png")
-    if os.path.exists(icon):
-        try:
-            root.iconphoto(True, tk.PhotoImage(file=icon))
-        except tk.TclError:
-            pass
-    App(root, initial)
+    try:
+        root = TkinterDnD.Tk() if _HAS_DND else tk.Tk()
+        icon = os.path.join(i18n.resource_dir(), "assets", "icon.png")
+        if os.path.exists(icon):
+            try:
+                root.iconphoto(True, tk.PhotoImage(file=icon))
+            except tk.TclError:
+                pass
+        App(root, initial)
+        root.update()  # draw the window first, then take the picture away
+    finally:
+        close_splash()  # also when the window could not be made: the error must not hide behind it
     root.mainloop()
