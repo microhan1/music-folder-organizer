@@ -12,16 +12,18 @@ import os
 import re
 from collections import Counter
 
+import albumname
 import i18n
 import pattern as pattern_mod
 from artists import ArtistIndex
 from dedupe import DupeGroup, sha1_file
 from longpath import fs
-from scan import (COVER_NAMES, LRC_EXT, SIDECAR_EXTS, TAGBAK_SUFFIX, ScanResult, Track, format_of,
+from scan import (COVER_NAMES, LRC_EXT, SIDECAR_EXTS, TAGBAK_SUFFIX, ScanResult, TagSet, Track, format_of,
                   is_junk, key_of, target_key)
 
 # item status
-OK, SAME, UNTAGGED, DUP, CONFLICT = "ok", "same", "untagged", "dup", "conflict"
+# NAME: a disc image or archive whose artist and album were read from its file name; never moved unless checked
+OK, SAME, UNTAGGED, DUP, CONFLICT, NAME = "ok", "same", "untagged", "dup", "conflict", "name"
 # item action
 MOVE, COPY, DUPE_MOVE, DUPE_TRASH, SKIP = "move", "copy", "dupe_move", "dupe_trash", "skip"
 
@@ -38,6 +40,7 @@ class Options:
     dupes_action: str = "move"  # or "trash"
     dupes_name: str = "_Duplicates"
     move_sidecars: bool = True  # an album's .cue/.log/images/Artwork follow it when the whole album moves
+    include_guesses: bool = False  # tick the files whose artist and album came from their name (the window leaves them to the user)
 
     @property
     def in_place(self) -> bool:
@@ -93,6 +96,7 @@ class Plan:
             "move": sum(1 for i in self.items if i.moves and i.action in (MOVE, COPY)),
             "same": sum(1 for i in self.items if i.status == SAME),
             "untagged": sum(1 for i in self.items if i.track.is_untagged() or i.track.error),
+            "guessed": sum(1 for i in self.items if i.status == NAME),
             "dupes": sum(1 for i in self.items if i.status == DUP),
             "folders": len(self.empty_dirs),
             "trash": sum(1 for i in self.items if i.moves and i.action == DUPE_TRASH),
@@ -125,16 +129,27 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
     group_of = {key_of(t.path): g.id for g in groups or [] for t in g.members}
     copy = opts.mode == "copy"
 
+    named = {}  # key_of(path) -> what the file name says, for the disc images and archives it can be read from
+    for f in scan.album_files:
+        if (g := albumname.guess(f.name)) is not None:
+            named[key_of(f.path)] = g
+
     def make_items() -> list[Item]:
         out: list[Item] = []
-        # an album file (.iso, .zip) has an item only when it is the extra copy of an identical one
-        pool = [*scan.tracks, *(f for f in scan.album_files if key_of(f.path) in removable)]
+        # an album file (.iso, .zip) has an item when it is the extra copy of an identical one, or its name says
+        # whose album it is
+        pool = [*scan.tracks, *(f for f in scan.album_files if key_of(f.path) in removable or key_of(f.path) in named)]
         for track in sorted(pool, key=lambda t: key_of(t.path)):
             k = key_of(track.path)
             untagged = track.is_untagged() or bool(track.error)
             if k in removable:
                 action = SKIP if copy else (DUPE_TRASH if opts.dupes_action == "trash" else DUPE_MOVE)
                 status, checked = DUP, not copy
+            elif track.is_album_file:
+                g = named[k]
+                track = dataclasses.replace(track, tags=TagSet(artist=g.artist, album=g.album, year=g.year))
+                action = COPY if copy else MOVE
+                status, checked = NAME, opts.include_guesses
             else:
                 action = COPY if copy else MOVE
                 status, checked = (UNTAGGED if untagged else OK), (opts.include_untagged or not untagged)
@@ -144,6 +159,9 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
                 action = COPY
             item = Item(track, track.path, "", status, checked, action, group=group_of.get(k, 0))
             _artist_note(item, index)
+            if status == NAME:
+                item.guess = True
+                item.artist_note = " · ".join(n for n in (i18n.t("note_from_name"), item.artist_note) if n)
             out.append(item)
         return out
 

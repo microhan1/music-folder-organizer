@@ -91,7 +91,7 @@ def snapshot(root) -> dict:
     return {"files": files, "dirs": sorted(dirs)}
 
 
-def build(root, dest=None, mode="move", groups=None, artists=None, overrides=None, **pref):
+def build(root, dest=None, mode="move", groups=None, artists=None, overrides=None, guesses=False, **pref):
     """scan -> artist index -> (dupes) -> plan, the way the GUI and CLI do it."""
     import dedupe
     import plan as plan_mod
@@ -104,6 +104,7 @@ def build(root, dest=None, mode="move", groups=None, artists=None, overrides=Non
     res = scan_mod.scan(str(root), session.excludes(str(root), dest, p))
     index, _ = session.make_index(res.tracks, p, session.existing_folders(res, dest))
     opts = session.options(p, str(root), dest, mode)
+    opts.include_guesses = guesses
     if groups == "find":
         groups = dedupe.find(res.dupe_candidates, index.rep)
     return res, plan_mod.build(res, opts, index, groups, overrides)

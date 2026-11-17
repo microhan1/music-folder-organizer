@@ -185,7 +185,8 @@ class Gen:
                       rnd.randint(1, 3), "", "2020", tagged=True)
         elif r < 0.97:  # disc images / archives: the same bytes twice (a duplicate), or the same size and other bytes
             body = bytes([rnd.randint(0, 255)]) * rnd.randint(1100, 3000)
-            name = rnd.choice(["Album.iso", "Album.zip", "disc.7z"])
+            name = rnd.choice(["Album.iso", "Album.zip", "disc.7z", "Foo - Bar.iso", "Rie Yoshizawa - JUICY (2000).zip",
+                               "A & B - Now (1999, Label) [SACD].7z"])
             for k in range(rnd.randint(1, 3)):
                 p = os.path.join(self.folder(), name if k == 0 else f"{k} {name}")
                 if self.claim(p):
@@ -223,11 +224,12 @@ def options(rnd: random.Random) -> dict:
                 fallbacks=dict(rnd.choice(FALLBACKS)), artist_name_preference=rnd.choice(["original", "latin"]))
 
 
-def pipeline(root: str, dest: str, p: prefs_mod.Prefs, dedupe_kind: str):
+def pipeline(root: str, dest: str, p: prefs_mod.Prefs, dedupe_kind: str, guesses: bool = False):
     """scan -> artist index -> duplicate groups -> plan, the way the CLI does it (main.run_cli)."""
     res = scan.scan(root, session.excludes(root, dest, p))
     index, _ = session.make_index(res.tracks, p, session.existing_folders(res, dest))
     opts = session.options(p, root, dest, "move")
+    opts.include_guesses = guesses  # disc images filed by the artist and album their name says
     groups = []
     if dedupe_kind:
         groups = dedupe.find(res.dupe_candidates, index.rep, preferred=session.preferred_paths(res, opts, index),
@@ -294,17 +296,18 @@ def test_random_music_folder_survives_run_rerun_and_undo(tmp_path, fake_trash, s
     gen = make_folder(str(root), rnd)
     opts = options(rnd)
     dedupe_kind = rnd.choice(["", "same", "same", "across"])
+    guesses = bool((seed >> 1) & 1)  # from the seed, so the random stream of the other choices stays as it was
     langs = list(i18n.LANGS)
     lang, other_lang = rnd.sample(langs, 2)
     i18n.set_lang(lang, persist=False)
     dest = {"same": str(root), "above": str(top), "inside": str(root / "sorted"), "other": str(tmp_path / "out")}[where]
     p = prefs_mod.Prefs(artists_path=str(tmp_path / "no-artists.json"), **opts)
-    tag = f"seed={seed} where={where} lang={lang}->{other_lang} dedupe={dedupe_kind!r} opts={opts} files={len(gen.made)}"
+    tag = f"seed={seed} where={where} lang={lang}->{other_lang} dedupe={dedupe_kind!r} guesses={guesses} opts={opts} files={len(gen.made)}"
     before = file_map(str(tmp_path))
     before_hashes = hashes(str(tmp_path))
     mtimes = {m: os.stat(m).st_mtime for m in gen.made if os.path.exists(m)}
 
-    res, the_plan = pipeline(str(root), dest, p, dedupe_kind)
+    res, the_plan = pipeline(str(root), dest, p, dedupe_kind, guesses)
     # P2: targets unique, inside the destination, short
     seen: dict[str, str] = {}
     targets = [(i.dst, i.src) for i in the_plan.items if i.dst and i.moves] + [(c.dst, c.src) for c in the_plan.companions]
@@ -331,12 +334,12 @@ def test_random_music_folder_survives_run_rerun_and_undo(tmp_path, fake_trash, s
     # P3 / P4: quiet when run again, also after the language was switched
     if where in ("same", "above"):
         _, again = pipeline(str(root), dest, prefs_mod.Prefs(artists_path=str(tmp_path / "no-artists.json"), **opts),
-                            dedupe_kind)
+                            dedupe_kind, guesses)
         acts = idle(again)
         assert not acts, f"{tag}: second run still wants to act: {acts[:4]}"
         i18n.set_lang(other_lang, persist=False)
         _, switched = pipeline(str(root), dest, prefs_mod.Prefs(artists_path=str(tmp_path / "no-artists.json"), **opts),
-                               dedupe_kind)
+                               dedupe_kind, guesses)
         acts = idle(switched)
         assert not acts, f"{tag}: after switching to {other_lang} the run wants to act: {acts[:4]}"
         i18n.set_lang(lang, persist=False)

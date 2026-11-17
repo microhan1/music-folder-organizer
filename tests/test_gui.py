@@ -1471,3 +1471,27 @@ def test_a_folder_of_images_only_still_shows_them(app, tmp_path):
     app.load_source(str(folder))
     app.wait()
     assert "Big non-music files left alone: 2 (41MB)" in app.lbl_summary.cget("text")
+
+
+# ------------------------------------------------------------------ v0.6.0 item 3: albums read from a file name
+def test_an_image_filed_by_its_name_is_listed_unticked_and_moves_when_ticked(app, tmp_path, monkeypatch):
+    import scan as scan_mod
+
+    monkeypatch.setattr(scan_mod, "BIG_FILE_BYTES", 1024)
+    folder = tmp_path / "Foo - Bar (2001) [SACD]"
+    folder.mkdir()
+    (folder / "Foo - Bar.iso").write_bytes(b"A" * 5000)
+    (folder / "folder.jpg").write_bytes(b"cover")
+    app.load_source(str(tmp_path))
+    app.wait()
+    app.notebook.select(0)
+    app.pump(0.2)
+    [row] = app.tree.get_children()
+    assert app.tree.set(row, "check") == "☐"  # not ticked
+    assert "Guessed" in app.tree.set(row, "status")
+    assert "Files whose album was guessed from the name: 1 (only checked ones move)" in app.lbl_summary.cget("text")
+    assert app.plan.items[0].dst.endswith(os.path.join("Foo", "Bar", "Foo - Bar.iso"))
+    app._set_checked([row], True)
+    app.wait()
+    assert app.plan.items[0].moves and [c.kind for c in app.plan.companions] == ["cover"]  # folder.jpg goes along
+    assert app.plan.summary()["move"] == 1

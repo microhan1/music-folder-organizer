@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fingerprint", action="store_true", help=t("cli_fingerprint"))
     p.add_argument("--trash", action="store_true", help=t("cli_trash"))
     p.add_argument("--include-untagged", action="store_true", help=t("cli_include_untagged"))
+    p.add_argument("--from-names", action="store_true", help=t("cli_from_names"))
     p.add_argument("--keep-empty", action="store_true", help=t("cli_keep_empty"))
     p.add_argument("--no-sidecars", action="store_true", help=t("cli_no_sidecars"))
     p.add_argument("--artists", help=t("cli_artists"))
@@ -169,7 +170,7 @@ def run_cli(args: argparse.Namespace) -> int:
 
     print(t("msg_scanning", path=root))
     result = scan_mod.scan(root, session.excludes(root, dest, p))
-    if not result.tracks and not (args.dedupe and result.album_files):
+    if not result.tracks and not (result.album_files and (args.dedupe or args.from_names)):
         print(t("msg_no_music"))
         if result.skipped:  # a folder of .iso images: say what was seen, not only that there is no music
             print(t("summary_skipped", count=len(result.skipped),
@@ -179,6 +180,7 @@ def run_cli(args: argparse.Namespace) -> int:
     if alias_error:
         print(t("err_artists_file", path=p.artists_file(), error=alias_error), file=sys.stderr)
     opts = session.options(p, root, dest, mode)
+    opts.include_guesses = args.from_names  # the window leaves them to the user's ticks
     groups = []
     if args.dedupe or args.fingerprint or args.dedupe_across_albums:
         exe = dedupe.find_fpcalc(p.fpcalc_path) if args.fingerprint else None
@@ -207,6 +209,8 @@ def run_cli(args: argparse.Namespace) -> int:
     if s["sidecars"]:
         line += ", " + t("summary_sidecars", count=s["sidecars"])
     print(line)
+    if s["guessed"]:
+        print(t("summary_guessed", count=s["guessed"]))
     if the_plan.skipped_files:
         print(t("summary_skipped", count=the_plan.skipped_files, size=scan_mod.format_size(the_plan.skipped_bytes)))
         if args.dry_run:

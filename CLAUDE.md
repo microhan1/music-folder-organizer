@@ -30,6 +30,7 @@ PRD와 결정 사항: [docs/PRD.md](docs/PRD.md). 실제로 있었던 문제와 
 - exe 는 압축을 푸는 동안 시작 그림(`assets/splash.png`, `build.bat`의 `--splash`, `assets/make_splash.py`가 그림)을 보인다. `gui.launch`가 창을 다 그린 뒤(`root.update()`) `close_splash()`로 닫고, 창을 만들다 실패해도 `finally`에서 닫는다(오류 안내가 그림에 가리지 않게). 무거운 import 는 없다(mutagen 35~80ms) — 늦은 import 를 더하지 않는다. 시작 시간은 같은 사본을 두 번째 띄운 값으로 잰다(LESSONS D24).
 - 음악도 부속 파일(`SIDECAR_EXTS`)도 정크도 아닌 8MiB 이상 파일은 옮기지 않고 `ScanResult.skipped`·`Plan.skipped_files`로 개수·크기만 알린다(`scan.is_skipped_kind`; 이 도구의 `organize_log.json*`은 뺀다). 큰 파일을 흉내 낼 때 `truncate`는 희소 파일이 아니다(LESSONS D25).
 - 그중 앨범 이미지·압축 확장자(`scan.ALBUM_FILE_EXTS`)는 `ScanResult.album_files`(태그 없는 가짜 `Track`, `is_album_file`)로도 두고 중복 찾기에는 `dupe_candidates`를 넘긴다(1단계 SHA-1만 해당). 곡 목록을 `.tracks`로 쓰는 곳과 구분한다: 음악 정보·가수 색인은 `.tracks`, `dedupe.find`는 `dupe_candidates`. 옮겨진 사본은 `Plan.skipped_files`·`skipped_list`에서 빠진다. 음악이 없어도 `--dedupe`면 CLI가 멈추지 않는다(LESSONS D26).
+- 앨범 이미지·압축 파일의 **파일 이름**(`albumname.guess`)에서 읽은 가수·앨범·연도는 `plan.NAME`("추정") 항목으로만 제안한다: 체크 해제로 시작(`Options.include_guesses`, 명령줄 `--from-names`일 때만 켜짐), 파일 이름은 그대로 두고 폴더만 규칙을 따른다. **폴더 이름은 읽지 않는다** — 옮긴 뒤 만들어진 폴더를 다음 실행이 새 가수·앨범으로 읽으면 다시 옮겨진다(A27~A33). 연도도 파일 이름에서만. 읽는 규칙을 바꾸면 `tests/test_album_names.py`와 퍼즈(`guesses`)·변이 점검을 돌린다.
 - 화면에 보이는 문자열은 전부 `lang/*.json`. 키를 추가하면 4개 언어 모두 추가(`test_i18n.py`가 검사).
 
 ## 검증 순서
