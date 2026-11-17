@@ -17,6 +17,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import check_indicator
 import dedupe
 import i18n
 import mover
@@ -61,6 +62,11 @@ UPDATE_BG = "#eff6ff"  # the one-line "new version" notice
 UPDATE_BORDER = "#bfdbfe"
 UPDATE_SLUG = "musicfolder"  # the tool's name on the 책갈피 tools site
 ERROR_SOFT = "#fdecec"
+# check boxes: clam's indicatorsize 10 (drawn 1px larger) and margin 6, now grown with the display
+# scale like the text (clam kept them at 10 px, so at 150 % the box was smaller than the letters).
+# At 100 % the box and the text position are as before (2026-11-17)
+CHECK_SIZE_PT = 10
+CHECK_MARGIN_PT = 6
 MAX_LIST = 30  # lines of a failure list shown in a dialog
 TAG_FILLER_EXE = "music-tag-filler.exe"
 TAG_FILLER_EXTS = {".mp3", ".flac", ".m4a", ".ogg"}  # what music-tag-filler reads and writes
@@ -114,6 +120,12 @@ def window_size(root: tk.Misc) -> tuple[int, int, int, int]:
     height = max(round(700 * scale), min(round(1000 * scale), screen_h))
     return (min(round(1280 * scale), screen_w), min(height, screen_h),
             min(round(1000 * scale), screen_w), min(round(840 * scale), screen_h))
+
+
+def check_sizes(scale: float) -> tuple[int, int]:
+    """(box, box + gap before the text) of a check box in screen pixels at this display scale."""
+    size, margin = round(CHECK_SIZE_PT * scale), round(CHECK_MARGIN_PT * scale)
+    return size + 1, size + margin
 
 
 def _fmt_length(seconds: float) -> str:
@@ -424,6 +436,11 @@ class App:
             s.configure(w, background=SURFACE, indicatorbackground=SURFACE, indicatorforeground=ACCENT,
                         upperbordercolor="#c3c8cf", lowerbordercolor="#c3c8cf", indicatormargin=(0, 0, 6, 0))
             s.map(w, background=[("active", SURFACE)], indicatorbackground=[("selected", SURFACE), ("pressed", ACCENT_SOFT)])
+        # a green box with a white tick instead of clam's X (check_indicator.py, same file as music-tag-filler)
+        box, space = check_sizes(max(1.0, root.winfo_fpixels("1i") / 96.0))
+        self._check_images = check_indicator.install(
+            s, root, scale=max(1.0, root.winfo_fpixels("1i") / 96.0), accent=ACCENT, accent_dark=ACCENT_HOVER,
+            bg=SURFACE, size=box, gap=space - box)
 
         s.configure("TCombobox", padding=(8, 5), arrowcolor=MUTED, fieldbackground=SURFACE, background=SURFACE, **flat)
         s.map("TCombobox", fieldbackground=[("readonly", SURFACE)], bordercolor=[("focus", ACCENT)],

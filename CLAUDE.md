@@ -17,6 +17,7 @@ PRD와 결정 사항: [docs/PRD.md](docs/PRD.md). 실제로 있었던 문제와 
 - 번호를 붙이는 반복은 번호가 결과 경로를 실제로 바꾸는지 확인한다: 자르기(`pattern.fit`)가 번호를 잘라 내면 영원히 돈다(`plan._numbered`, A27). 제목 태그가 없는 파일은 이름을 그대로 둔다(A28).
 - 폴더 걷기는 `longpath.walk()`(심볼릭 링크·junction은 들어가지 않음, A33). `longpath.py`는 photo-organizer와 같은 파일.
 - 정크 파일 판정은 `scan.is_junk`(맥의 `._*` 포함) 한 곳만 쓴다(A25). 창·여백 같은 픽셀 크기는 화면 배율을 거친다(`gui.window_size`, A26).
+- 설정 창 체크 상자는 `check_indicator.py`가 그린다(✓, 배율에 맞춘 크기). music-tag-filler와 같은 파일이니 고치면 양쪽에(A40).
 - 기존 경로의 식별은 `scan.key_of`(대소문자 무시), 새 이름 충돌은 `scan.target_key`(NFC 포함). 둘을 섞지 않는다.
 - 충돌 번호가 붙는 기능을 바꾸면 재실행(멱등성) 테스트를 함께 돌린다.
 - GUI worker 스레드 안에서는 위젯과 tk 변수를 건드리지 않는다. 참조로 쥐지도 않는다(창·App 메서드 포함) — 결과는 평범한 값으로 두고 Tk 스레드가 `after`로 가져간다. 작업 스레드 함수 안에 `self.`가 보이면 안 된다 — 큐·취소 신호·사본을 띄우기 전에 지역 변수로(LESSONS A35·A36, `test_no_worker_thread_holds_the_window`).
