@@ -86,6 +86,7 @@ class Plan:
     disc_albums: int = 0  # multi-disc albums, counted when the pattern has no "{disc}" (a hint to use one)
     skipped_files: int = 0  # big files that are not music (an .iso, a .zip): left where they are
     skipped_bytes: int = 0
+    skipped_list: list[tuple[str, int]] = dataclasses.field(default_factory=list)  # those files, for --dry-run
 
     def summary(self) -> dict[str, int]:
         return {
@@ -126,7 +127,9 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
 
     def make_items() -> list[Item]:
         out: list[Item] = []
-        for track in sorted(scan.tracks, key=lambda t: key_of(t.path)):
+        # an album file (.iso, .zip) has an item only when it is the extra copy of an identical one
+        pool = [*scan.tracks, *(f for f in scan.album_files if key_of(f.path) in removable)]
+        for track in sorted(pool, key=lambda t: key_of(t.path)):
             k = key_of(track.path)
             untagged = track.is_untagged() or bool(track.error)
             if k in removable:
@@ -171,7 +174,9 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
         release |= stranded
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
     hint = 0 if uses_disc else len(multi_disc_albums([t.disc_view() for t in scan.tracks], artist_map))
-    return Plan(opts, items, companions, empty, hint, len(scan.skipped), sum(size for _, size in scan.skipped))
+    moved = {i.key for i in items if i.track.is_album_file}  # sent away as duplicates: no longer "left alone"
+    left = [(path, size) for path, size in scan.skipped if key_of(path) not in moved]
+    return Plan(opts, items, companions, empty, hint, len(left), sum(size for _, size in left), left)
 
 
 def _cue_travels(item: Item, companions: list[Companion]) -> bool:

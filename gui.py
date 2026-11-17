@@ -866,7 +866,7 @@ class App:
                 return ("scanned", None)
             index, err = session.make_index(res.tracks, prefs, session.existing_folders(res, opts.dest))
             pref = session.preferred_paths(res, opts, index)
-            groups = dedupe.find(res.tracks, index.rep, preferred=pref, cancel=cancel,
+            groups = dedupe.find(res.dupe_candidates, index.rep, preferred=pref, cancel=cancel,
                                  progress=lambda ph, d, n: q.put(("progress", d, n, "msg_hashing")))
             # every group is applied: its recommendation already keeps one file per album
             return ("scanned", (res, index, err, groups))
@@ -1084,7 +1084,8 @@ class App:
                 k = scan_mod.key_of(m.path)
                 tree.insert(gid, "end", iid=f"{gid}|{k}", tags=([] if g.applied else ["off"]),
                             values=("", ON if k in g.keep else OFF, _rel(m.path, self.source), m.fmt,
-                                    f"{m.bitrate} kbps", _fmt_length(m.length)))
+                                    scan_mod.format_size(m.size) if m.is_album_file else f"{m.bitrate} kbps",
+                                    _fmt_length(m.length)))
 
     def _fill_artists(self) -> None:
         tree = self.atree
@@ -1220,7 +1221,7 @@ class App:
         if fp and not exe:
             messagebox.showwarning(t("app_title"), t("err_no_fpcalc"))
             return
-        tracks, index = self.scan.tracks, self.index
+        tracks, index = self.scan.dupe_candidates, self.index
         pref = session.preferred_paths(self.scan, self.options(), index)
         q, cancel = self.queue, self.cancel  # the worker never holds `self` (LESSONS A36)
 

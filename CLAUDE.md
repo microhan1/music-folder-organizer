@@ -29,6 +29,7 @@ PRD와 결정 사항: [docs/PRD.md](docs/PRD.md). 실제로 있었던 문제와 
 - 인터넷에 나가는 것은 새 버전 확인(`update_check.py`, 하루 한 번, 도구 이름·버전만, 설정에서 끔)뿐이다. 다른 기능을 더하지 않는다. 「의견 보내기」는 브라우저로 툴 페이지를 열 뿐 프로그램은 아무것도 보내지 않으며, 주소는 `update_check.feedback_url`이 상수로만 만든다(설정·서버 응답에서 받지 않음). 테스트는 `conftest.no_network`가 막는다(LESSONS C8). 릴리스마다 `version.py`의 `APP_VERSION`을 올린다.
 - exe 는 압축을 푸는 동안 시작 그림(`assets/splash.png`, `build.bat`의 `--splash`, `assets/make_splash.py`가 그림)을 보인다. `gui.launch`가 창을 다 그린 뒤(`root.update()`) `close_splash()`로 닫고, 창을 만들다 실패해도 `finally`에서 닫는다(오류 안내가 그림에 가리지 않게). 무거운 import 는 없다(mutagen 35~80ms) — 늦은 import 를 더하지 않는다. 시작 시간은 같은 사본을 두 번째 띄운 값으로 잰다(LESSONS D24).
 - 음악도 부속 파일(`SIDECAR_EXTS`)도 정크도 아닌 8MiB 이상 파일은 옮기지 않고 `ScanResult.skipped`·`Plan.skipped_files`로 개수·크기만 알린다(`scan.is_skipped_kind`; 이 도구의 `organize_log.json*`은 뺀다). 큰 파일을 흉내 낼 때 `truncate`는 희소 파일이 아니다(LESSONS D25).
+- 그중 앨범 이미지·압축 확장자(`scan.ALBUM_FILE_EXTS`)는 `ScanResult.album_files`(태그 없는 가짜 `Track`, `is_album_file`)로도 두고 중복 찾기에는 `dupe_candidates`를 넘긴다(1단계 SHA-1만 해당). 곡 목록을 `.tracks`로 쓰는 곳과 구분한다: 음악 정보·가수 색인은 `.tracks`, `dedupe.find`는 `dupe_candidates`. 옮겨진 사본은 `Plan.skipped_files`·`skipped_list`에서 빠진다. 음악이 없어도 `--dedupe`면 CLI가 멈추지 않는다(LESSONS D26).
 - 화면에 보이는 문자열은 전부 `lang/*.json`. 키를 추가하면 4개 언어 모두 추가(`test_i18n.py`가 검사).
 
 ## 검증 순서

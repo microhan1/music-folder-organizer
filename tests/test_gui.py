@@ -294,7 +294,7 @@ def test_language_switch_keeps_state(app, lib):
     for code in ("ko", "zh-CN", "ja", "en"):
         app.var_lang.set(i18n.LANG_NAMES[code])
         app._on_lang()
-        app.pump(0.1)
+        app.wait()  # the plan is rebuilt on a worker; a fixed pump read the old plan when the machine was busy
         assert app.root.title() == i18n.load_lang_file(code)["app_title"]
         assert not next(i for i in app.plan.items if i.key == key).checked
         assert len(app.tree.get_children()) == 5
@@ -1465,9 +1465,9 @@ def test_summary_names_the_big_files_it_leaves_alone(app, lib):
 def test_a_folder_of_images_only_still_shows_them(app, tmp_path):
     folder = tmp_path / "images"
     folder.mkdir()
-    for name in ("A.iso", "B.zip"):
+    for name, mb in (("A.iso", 20), ("B.zip", 21)):  # different sizes: identical bytes would be a duplicate pair
         with open(folder / name, "wb") as f:
-            f.truncate(20 * 1024 * 1024)
+            f.truncate(mb * 1024 * 1024)
     app.load_source(str(folder))
     app.wait()
-    assert "Big non-music files left alone: 2 (40MB)" in app.lbl_summary.cget("text")
+    assert "Big non-music files left alone: 2 (41MB)" in app.lbl_summary.cget("text")

@@ -169,7 +169,7 @@ def run_cli(args: argparse.Namespace) -> int:
 
     print(t("msg_scanning", path=root))
     result = scan_mod.scan(root, session.excludes(root, dest, p))
-    if not result.tracks:
+    if not result.tracks and not (args.dedupe and result.album_files):
         print(t("msg_no_music"))
         if result.skipped:  # a folder of .iso images: say what was seen, not only that there is no music
             print(t("summary_skipped", count=len(result.skipped),
@@ -187,7 +187,7 @@ def run_cli(args: argparse.Namespace) -> int:
                 print(t("msg_fp_estimate", count=len(result.tracks), sec=dedupe.estimate_seconds(len(result.tracks))))
             else:
                 print(t("err_no_fpcalc"), file=sys.stderr)
-        groups = dedupe.find(result.tracks, index.rep, fingerprint=bool(exe), fpcalc=exe,
+        groups = dedupe.find(result.dupe_candidates, index.rep, fingerprint=bool(exe), fpcalc=exe,
                              preferred=session.preferred_paths(result, opts, index),
                              across_albums=args.dedupe_across_albums)
     the_plan = plan_mod.build(result, opts, index, groups)
@@ -210,7 +210,7 @@ def run_cli(args: argparse.Namespace) -> int:
     if the_plan.skipped_files:
         print(t("summary_skipped", count=the_plan.skipped_files, size=scan_mod.format_size(the_plan.skipped_bytes)))
         if args.dry_run:
-            for path, size in result.skipped:
+            for path, size in the_plan.skipped_list:
                 print(f"  - {_rel(path, root)} ({scan_mod.format_size(size)})")
     if s["untagged"]:
         print(t("msg_untagged_hint"))

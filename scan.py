@@ -28,6 +28,9 @@ SIDECAR_EXTS = {".cue", ".log", ".txt", ".nfo", ".m3u", ".m3u8", ".pdf", ".accur
                 ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
 CUE_MAX_BYTES = 1024 * 1024
 BIG_FILE_BYTES = 8 * 1024 * 1024  # a file this big that is neither music nor an album extra is reported as skipped
+# a whole album in one file (a SACD image, an archive): never organized, but two identical ones are found
+ALBUM_FILE_EXTS = {".iso", ".img", ".bin", ".mdf", ".nrg", ".zip", ".rar", ".7z", ".tar", ".tgz"}
+ALBUM_FILE_FORMATS = {ext[1:].upper() for ext in ALBUM_FILE_EXTS}  # what Track.fmt says for them: "ISO", "ZIP", ...
 _CUE_FILE = re.compile(r'^\s*FILE\s+(?:"([^"]+)"|(\S+))', re.IGNORECASE | re.MULTILINE)
 
 
@@ -107,7 +110,14 @@ class Track:
     def name(self) -> str:
         return os.path.basename(self.path)
 
+    @property
+    def is_album_file(self) -> bool:
+        """A big .iso/.zip/...: a Track only so that duplicates can be found; it has no tags to miss."""
+        return self.fmt in ALBUM_FILE_FORMATS
+
     def is_untagged(self) -> bool:
+        if self.is_album_file:
+            return False
         return not self.tags.title or not (self.tags.artist or self.tags.album_artist)
 
     def disc_view(self) -> "Track":
@@ -135,11 +145,19 @@ class ScanResult:
     dirs: dict[str, DirInfo]  # key: key_of(path)
     cancelled: bool = False
     skipped: list[tuple[str, int]] = dataclasses.field(default_factory=list)  # (path, bytes): big files that are not music
+    album_files: list[Track] = dataclasses.field(default_factory=list)  # the .iso/.zip ones among them, as Tracks
+
+    @property
+    def dupe_candidates(self) -> list[Track]:
+        """What the duplicate search looks at: the songs, and the big album files (identical ones only)."""
+        return [*self.tracks, *self.album_files]
 
 
 def format_size(size: int) -> str:
-    """"15.9GB" / "193MB": for the big files only (8 MiB and up)."""
-    return f"{size / 2 ** 30:.1f}GB" if size >= 2 ** 30 else f"{size / 2 ** 20:.0f}MB"
+    """"15.9GB" / "193MB" (/ "5KB" under 1 MiB): for the big files, which start at 8 MiB."""
+    if size >= 2 ** 30:
+        return f"{size / 2 ** 30:.1f}GB"
+    return f"{size / 2 ** 20:.0f}MB" if size >= 2 ** 20 else f"{size / 1024:.0f}KB"
 
 
 def is_skipped_kind(name: str) -> bool:
@@ -277,7 +295,9 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
             pool.shutdown(wait=True, cancel_futures=True)  # on a cancel the queued files are dropped
     if cache is not None:
         cache.add(seen, hits)
-    return ScanResult(root, tracks, dirs, skipped=skipped)
+    album_files = [Track(os.path.abspath(path), os.path.splitext(path)[1][1:].upper(), size)
+                   for path, size in skipped if os.path.splitext(path)[1].lower() in ALBUM_FILE_EXTS]
+    return ScanResult(root, tracks, dirs, skipped=skipped, album_files=album_files)
 
 
 def cue_refs(path: str) -> set[str]:

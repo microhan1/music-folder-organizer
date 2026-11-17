@@ -64,6 +64,14 @@ MUTATIONS = [
     ("a disc mark that disagrees with the disc tag is left alone", "scan.py",
      "        if parts[0].isdigit() and int(parts[0]) == number:\n            return m.group(\"base\").strip(), disc\n        return album, disc",
      "        return m.group(\"base\").strip(), disc", "tests/test_disc_marks.py -k disc_tag_decides"),
+    ("an extra identical image is not planned as a duplicate", "plan.py",
+     "        pool = [*scan.tracks, *(f for f in scan.album_files if key_of(f.path) in removable)]",
+     "        pool = [*scan.tracks]", "tests/test_album_files.py"),
+    ("a moved copy still counts as left alone", "plan.py",
+     "    left = [(path, size) for path, size in scan.skipped if key_of(path) not in moved]",
+     "    left = list(scan.skipped)", "tests/test_album_files.py"),
+    ("an image counts as missing tags", "scan.py",
+     "        if self.is_album_file:\n            return False\n", "", "tests/test_album_files.py"),
 ]
 
 

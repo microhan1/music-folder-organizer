@@ -183,6 +183,20 @@ class Gen:
             album = rnd.choice(["Album One", "Live '99"])
             self.song(os.path.join(self.root, artist, album), "{n:02d} - {t}", artist, album, rnd.choice(["Song", "Intro"]),
                       rnd.randint(1, 3), "", "2020", tagged=True)
+        elif r < 0.97:  # disc images / archives: the same bytes twice (a duplicate), or the same size and other bytes
+            body = bytes([rnd.randint(0, 255)]) * rnd.randint(1100, 3000)
+            name = rnd.choice(["Album.iso", "Album.zip", "disc.7z"])
+            for k in range(rnd.randint(1, 3)):
+                p = os.path.join(self.folder(), name if k == 0 else f"{k} {name}")
+                if self.claim(p):
+                    os.makedirs(os.path.dirname(p), exist_ok=True)
+                    open(p, "wb").write(body if rnd.random() < 0.7 else body[:-1] + b"z")
+                    self.made.append(p)
+                    if rnd.random() < 0.5:
+                        c = os.path.join(os.path.dirname(p), "folder.jpg")
+                        if self.claim(c):
+                            open(c, "wb").write(b"cover")
+                            self.made.append(c)
         else:  # the same file name under several albums, different songs
             title = rnd.choice(["Song", "Intro"])
             for _ in range(rnd.randint(2, 3)):
@@ -216,7 +230,7 @@ def pipeline(root: str, dest: str, p: prefs_mod.Prefs, dedupe_kind: str):
     opts = session.options(p, root, dest, "move")
     groups = []
     if dedupe_kind:
-        groups = dedupe.find(res.tracks, index.rep, preferred=session.preferred_paths(res, opts, index),
+        groups = dedupe.find(res.dupe_candidates, index.rep, preferred=session.preferred_paths(res, opts, index),
                              across_albums=dedupe_kind == "across")
     return res, plan_mod.build(res, opts, index, groups)
 
@@ -265,6 +279,7 @@ def idle(the_plan: plan_mod.Plan) -> list:
 
 @pytest.fixture
 def fake_trash(monkeypatch):
+    monkeypatch.setattr(scan, "BIG_FILE_BYTES", 1024)  # tiny disc images count as big ones
     gone = []
     monkeypatch.setattr(mover, "trash", lambda p: (gone.append(open(p, "rb").read()), mover.remove_file(p))[1])
     return gone

@@ -105,5 +105,5 @@ def build(root, dest=None, mode="move", groups=None, artists=None, overrides=Non
     index, _ = session.make_index(res.tracks, p, session.existing_folders(res, dest))
     opts = session.options(p, str(root), dest, mode)
     if groups == "find":
-        groups = dedupe.find(res.tracks, index.rep)
+        groups = dedupe.find(res.dupe_candidates, index.rep)
     return res, plan_mod.build(res, opts, index, groups, overrides)
