@@ -88,15 +88,25 @@ def test_the_settings_check_box_uses_the_tick(app):
             and (w.cget("style") or "TCheckbutton") == "TCheckbutton"] == []
 
 
-def test_same_size_and_text_position_as_the_clam_box(app):
-    """A check box with clam's old indicator asks for exactly the same space."""
+@pytest.mark.parametrize("scale, box, space", [(1.0, 11, 16), (1.25, 13, 20), (1.5, 16, 24), (2.0, 21, 32)])
+def test_box_grows_with_the_display_scale(scale, box, space):
+    """At 100 % the size clam had (box 11, text 16 px in); above that it grows with the text."""
+    import gui
+
+    assert gui.check_sizes(scale) == (box, space)
+
+
+def test_same_space_as_a_clam_box_of_the_scaled_size(app):
+    """A check box with clam's old indicator at the same (scaled) size and margin asks for exactly
+    the same space, so only the box changes, not the line it sits on."""
     import gui
     from tkinter import ttk
 
+    scale = max(1.0, app.root.winfo_fpixels("1i") / 96.0)
     style = ttk.Style(app.root)
     style.layout("OldX.TCheckbutton", ci._swap(style.layout("TCheckbutton"), ci.ELEMENT, ci.OLD_ELEMENT))
-    style.configure("OldX.TCheckbutton", indicatorsize=10)  # clam's default; margin (0, 0, 6, 0) from _style
-    assert gui.CHECK_SPACE_PX == 10 + 6
+    style.configure("OldX.TCheckbutton", indicatorsize=round(gui.CHECK_SIZE_PT * scale),
+                    indicatormargin=(0, 0, round(gui.CHECK_MARGIN_PT * scale), 0))
     for key in ("opt_update_check", "opt_fingerprint"):
         new = ttk.Checkbutton(app.root, text=i18n.t(key))
         old = ttk.Checkbutton(app.root, text=i18n.t(key), style="OldX.TCheckbutton")
@@ -113,9 +123,10 @@ def test_images_are_kept_and_survive_a_language_change(app):
 
     first = app._check_images
     assert set(first) == {name for _, name in ci.STATE_MAP} | {"off"}
+    box, space = gui.check_sizes(max(1.0, app.root.winfo_fpixels("1i") / 96.0))
     for img in first.values():
-        assert (img.width(), img.height()) == (gui.CHECK_SPACE_PX, gui.CHECK_BOX_PX)
-        assert all(img.transparency_get(x, 0) for x in range(gui.CHECK_BOX_PX, gui.CHECK_SPACE_PX))
+        assert (img.width(), img.height()) == (space, box)
+        assert all(img.transparency_get(x, 0) for x in range(box, space))
     app._style()
     assert app._check_images is first
     assert app.root._tick_check_images is first
@@ -133,7 +144,7 @@ def test_ticked_box_is_green_with_a_white_tick_unticked_is_white():
     import gui
 
     spec = ci.colours(gui.ACCENT, gui.ACCENT_HOVER)
-    size = gui.CHECK_BOX_PX
+    size = gui.check_sizes(1.0)[0]
     on = ci.render(size, *spec["on"], bg=gui.SURFACE)
     px = [_rgb(c) for row in on for c in row if c]
     assert sum(_near(p, _rgb(gui.ACCENT), 10) for p in px) > len(px) * 0.4
