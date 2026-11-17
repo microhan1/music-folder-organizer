@@ -27,6 +27,7 @@ LOG_NAME = "organize_log.json"
 SIDECAR_EXTS = {".cue", ".log", ".txt", ".nfo", ".m3u", ".m3u8", ".pdf", ".accurip", ".sfv", ".md5", ".ffp",
                 ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
 CUE_MAX_BYTES = 1024 * 1024
+BIG_FILE_BYTES = 8 * 1024 * 1024  # a file this big that is neither music nor an album extra is reported as skipped
 _CUE_FILE = re.compile(r'^\s*FILE\s+(?:"([^"]+)"|(\S+))', re.IGNORECASE | re.MULTILINE)
 
 
@@ -133,6 +134,19 @@ class ScanResult:
     tracks: list[Track]
     dirs: dict[str, DirInfo]  # key: key_of(path)
     cancelled: bool = False
+    skipped: list[tuple[str, int]] = dataclasses.field(default_factory=list)  # (path, bytes): big files that are not music
+
+
+def format_size(size: int) -> str:
+    """"15.9GB" / "193MB": for the big files only (8 MiB and up)."""
+    return f"{size / 2 ** 30:.1f}GB" if size >= 2 ** 30 else f"{size / 2 ** 20:.0f}MB"
+
+
+def is_skipped_kind(name: str) -> bool:
+    """A file the tool never organizes: not music, not an album extra that follows its album (cover, .cue,
+    .log, ...), not system clutter. An .iso or a .zip, for instance."""
+    return (not format_of(name) and not is_junk(name) and os.path.splitext(name)[1].lower() not in SIDECAR_EXTS
+            and not name.lower().startswith(LOG_NAME))  # this tool's own undo log (and its .journal/.part)
 
 
 def key_of(path: str) -> str:
@@ -218,6 +232,7 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
     skip = {key_of(p) for p in (exclude or [])}
     dirs: dict[str, DirInfo] = {}
     audio: list[str] = []
+    skipped: list[tuple[str, int]] = []
     for here, subdirs, files in walk(root):  # reaches folders deeper than 260 characters
         if cancel is not None and cancel.is_set():
             return ScanResult(root, [], dirs, cancelled=True)
@@ -229,6 +244,14 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
                 info.cue_refs |= cue_refs(os.path.join(here, f))
         dirs[key_of(here)] = info
         audio.extend(os.path.join(here, f) for f in files if format_of(f) and not is_junk(f))
+        for f in files:  # only the few files that are neither music nor extras are measured
+            if is_skipped_kind(f):
+                try:
+                    size = os.stat(fs(os.path.join(here, f))).st_size
+                except OSError:
+                    continue
+                if size >= BIG_FILE_BYTES:
+                    skipped.append((os.path.join(here, f), size))
     tracks: list[Track] = []
     total = len(audio)
     seen: dict[tuple, tuple[int, int, Track]] = {}
@@ -254,7 +277,7 @@ def scan(root: str, exclude: list[str] | None = None, progress: ProgressFn | Non
             pool.shutdown(wait=True, cancel_futures=True)  # on a cancel the queued files are dropped
     if cache is not None:
         cache.add(seen, hits)
-    return ScanResult(root, tracks, dirs)
+    return ScanResult(root, tracks, dirs, skipped=skipped)
 
 
 def cue_refs(path: str) -> set[str]:

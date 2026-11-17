@@ -71,6 +71,7 @@
   "lbl_options": "Options",
   "opt_sidecars": "Bring album extras along",
   "summary_sidecars": "{count} album extras along",
+  "summary_skipped": "Big non-music files left alone: {count} ({size})",
   "status_keep_name": "name kept (cue)",
   "cli_no_sidecars": "do not bring album extras (.cue, .log, images, Artwork/ ...) along",
   "lbl_language": "Language",

@@ -71,6 +71,7 @@
   "lbl_options": "オプション",
   "opt_sidecars": "アルバムの付属ファイルも一緒に",
   "summary_sidecars": "付属ファイル {count} 件も一緒に",
+  "summary_skipped": "音楽ではないため整理しない大きなファイル {count} 件({size})",
   "status_keep_name": "ファイル名を維持 (cue)",
   "cli_no_sidecars": "アルバムの付属ファイル (.cue・.log・画像・Artwork など) を移動しない",
   "lbl_language": "言語",

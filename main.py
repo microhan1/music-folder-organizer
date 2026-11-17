@@ -171,6 +171,9 @@ def run_cli(args: argparse.Namespace) -> int:
     result = scan_mod.scan(root, session.excludes(root, dest, p))
     if not result.tracks:
         print(t("msg_no_music"))
+        if result.skipped:  # a folder of .iso images: say what was seen, not only that there is no music
+            print(t("summary_skipped", count=len(result.skipped),
+                    size=scan_mod.format_size(sum(size for _, size in result.skipped))))
         return 1
     index, alias_error = session.make_index(result.tracks, p, session.existing_folders(result, dest))
     if alias_error:
@@ -204,6 +207,11 @@ def run_cli(args: argparse.Namespace) -> int:
     if s["sidecars"]:
         line += ", " + t("summary_sidecars", count=s["sidecars"])
     print(line)
+    if the_plan.skipped_files:
+        print(t("summary_skipped", count=the_plan.skipped_files, size=scan_mod.format_size(the_plan.skipped_bytes)))
+        if args.dry_run:
+            for path, size in result.skipped:
+                print(f"  - {_rel(path, root)} ({scan_mod.format_size(size)})")
     if s["untagged"]:
         print(t("msg_untagged_hint"))
     if args.dry_run:

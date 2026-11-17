@@ -133,6 +133,7 @@ Tell us what's broken or missing with **Send feedback** at the top of the window
 - It never deletes files outright: duplicates go to the `_Duplicates` folder or the recycle bin.
 - No format conversion, playback or playlists.
 - Lyrics, covers and album extras only travel with the music; their content is never edited.
+- Big files that are neither music nor album extras (an `.iso` SACD image, a `.zip`; 8 MB and up) stay where they are. The summary line only says how many and how big (`--dry-run` lists them).
 
 ## License
 

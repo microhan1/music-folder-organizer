@@ -1450,3 +1450,24 @@ def test_update_button_opens_the_page_for_the_language(fb, browser, lang):
     fb._update_open()
     assert browser["opened"] == [info.url if lang == "ko" else info.url_en]
     assert ("/en/" in browser["opened"][0]) == ("/en/" in _feedback_url(lang))
+
+
+# ------------------------------------------------------------------ v0.6.0 item 1: big files that are not music
+def test_summary_names_the_big_files_it_leaves_alone(app, lib):
+    (lib / "sacd").mkdir()
+    with open(lib / "sacd" / "Album.iso", "wb") as f:
+        f.truncate(9 * 1024 * 1024)
+    app.load_source(str(lib))
+    app.wait()
+    assert "Big non-music files left alone: 1 (9MB)" in app.lbl_summary.cget("text")
+
+
+def test_a_folder_of_images_only_still_shows_them(app, tmp_path):
+    folder = tmp_path / "images"
+    folder.mkdir()
+    for name in ("A.iso", "B.zip"):
+        with open(folder / name, "wb") as f:
+            f.truncate(20 * 1024 * 1024)
+    app.load_source(str(folder))
+    app.wait()
+    assert "Big non-music files left alone: 2 (40MB)" in app.lbl_summary.cget("text")

@@ -84,6 +84,8 @@ class Plan:
     companions: list[Companion]
     empty_dirs: list[str]
     disc_albums: int = 0  # multi-disc albums, counted when the pattern has no "{disc}" (a hint to use one)
+    skipped_files: int = 0  # big files that are not music (an .iso, a .zip): left where they are
+    skipped_bytes: int = 0
 
     def summary(self) -> dict[str, int]:
         return {
@@ -169,7 +171,7 @@ def build(scan: ScanResult, opts: Options, index: ArtistIndex | None = None,
         release |= stranded
     empty = _empty_dirs(items, companions, scan, opts) if (not copy and opts.remove_empty) else []
     hint = 0 if uses_disc else len(multi_disc_albums([t.disc_view() for t in scan.tracks], artist_map))
-    return Plan(opts, items, companions, empty, hint)
+    return Plan(opts, items, companions, empty, hint, len(scan.skipped), sum(size for _, size in scan.skipped))
 
 
 def _cue_travels(item: Item, companions: list[Companion]) -> bool:

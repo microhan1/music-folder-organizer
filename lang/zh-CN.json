@@ -71,6 +71,7 @@
   "lbl_options": "选项",
   "opt_sidecars": "一并移动专辑附带文件",
   "summary_sidecars": "附带文件 {count} 个一并移动",
+  "summary_skipped": "非音乐、不整理的大文件 {count} 个({size})",
   "status_keep_name": "保留文件名 (cue)",
   "cli_no_sidecars": "不移动专辑附带文件 (.cue、.log、图片、Artwork 等)",
   "lbl_language": "语言",

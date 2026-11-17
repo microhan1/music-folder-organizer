@@ -1026,6 +1026,9 @@ class App:
         text = t("summary", **{k: s[k] for k in ("move", "same", "untagged", "dupes", "folders")})
         if s["sidecars"]:
             text += ", " + t("summary_sidecars", count=s["sidecars"])
+        if self.plan.skipped_files:
+            text += "   ·   " + t("summary_skipped", count=self.plan.skipped_files,
+                                  size=scan_mod.format_size(self.plan.skipped_bytes))
         if s["untagged"]:
             text += "   ·   " + t("msg_untagged_hint")
         if self.alias_error:
